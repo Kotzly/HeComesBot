@@ -22,8 +22,9 @@ def MakeBackground():
     parser.add_option('-d', '--dims', dest='dims', default='512x512', help='Image width x height, e.g. 320x240')
     parser.add_option('-s', '--seed', dest='seed', default=int(1000 * time.time()), help='Random seed (uses system time by default)')
     options, _ = parser.parse_args()
-
+    
     dX, dY = (int(n) for n in options.dims.lower().split('x'))
+    #create the seed
     try:
         options.seed = int(options.seed)
     except ValueError:
@@ -133,7 +134,7 @@ def CombineImage(text):
     x = random.randint(0, 50)
     y = random.randint(0, 150)
 
-    
+    # Make outline by re-drawing the text in every direction
     for adj in range(outlineAmount):
         #move right
         draw.text((x-adj, y), text, font=fnt, fill=textOutline)
@@ -180,6 +181,7 @@ def CombineImage(text):
 
 
 def postToFacebook(post_text):
+    #obvs token is hidden
     token = ""
     graph = facebook.GraphAPI(token)
     post_id = graph.put_photo(image = open(r"C:\Users\Administrator\Desktop\societyBot-master\outputWithText.png", 'rb'), message=post_text)['post_id']
@@ -190,7 +192,9 @@ def postToFacebook(post_text):
 def job():
     title = makeText()
     print(title)
-
+    
+    # Try/Except is a basic way of keeping the bot up
+    # while the image or text can fail to generate
     try:
         MakeBackground()
         CombineImage(title.lower())
