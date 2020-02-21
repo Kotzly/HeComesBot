@@ -82,6 +82,8 @@ def MakeBackground():
     print('Seed %s; wrote output to %s' % (repr(options.seed), options.outputPath))
 
 
+# This is being worked on, as wrapped text won't draw an outline for some reason
+# as such, the max text size is 50 chars so it does not have to wrap
 def TextWrap(text, font, max_width):
 
     lines = []
