@@ -110,6 +110,8 @@ def MakeBackground(config):
         n_args, func = get_random_function(depth, p=config.personality)
         with open(config.save_path + f"{config.seed}_tree.txt", "a") as file:
             file.write("|\t"*depth + func.__name__ + "\n")
+            # file.write("\t"*(depth - 1) + ("\t" + "-"*6)*(depth > 0) + func.__name__ + "\n")
+
         args = list()
         for n in range(n_args):
             arg = build_img(depth + 1)
