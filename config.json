@@ -1,17 +1,33 @@
 {
     "quotes_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/quotes.txt",
-    "output_background_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/output.png",
+    "background_path": "./background.png",
     "output_path": "./output.png",
     "font_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/zalgo.ttf",
-    "sequence_length": 50,
+    "personality": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        0.2,
+        0.2,
+        1,
+        1,
+        1,
+        1
+    ],
+    "min_sequence_length": 70,
+    "max_sequence_length": 100,
     "post_to_facebook": false,
-    "post_delay_minutes": 30,
+    "post_delay_seconds": 1800,
     "max_depth": 15,
     "min_depth": 5,
     "dims": [
         512,
         512
     ],
-    "markov_model_state_size": 2,
-    "seed": 1583468982448
+    "markov_model_state_size": 3,
+    "seed": 1583475647325,
+    "save_path": "./history/",
+    "restart": true
 }
