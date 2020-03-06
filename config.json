@@ -1,0 +1,17 @@
+{
+    "quotes_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/quotes.txt",
+    "output_background_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/output.png",
+    "output_path": "./output.png",
+    "font_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/zalgo.ttf",
+    "sequence_length": 50,
+    "post_to_facebook": false,
+    "post_delay_minutes": 30,
+    "max_depth": 15,
+    "min_depth": 5,
+    "dims": [
+        512,
+        512
+    ],
+    "markov_model_state_size": 2,
+    "seed": 1583468982448
+}
