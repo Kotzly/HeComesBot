@@ -20,7 +20,7 @@
     "min_sequence_length": 50,
     "max_sequence_length": 150,
     "post_to_facebook": false,
-    "post_delay_seconds": 30,
+    "post_delay_seconds": 3,
     "max_depth": 15,
     "min_depth": 5,
     "dims": [
@@ -28,7 +28,9 @@
         512
     ],
     "markov_model_state_size": 3,
-    "seed": 1583544075192,
+    "seed": 1583602169153,
     "history_path": "./history/",
-    "restart": true
+    "restart": true,
+    "tree_log_path": "./history/",
+    "token": "123"
 }
