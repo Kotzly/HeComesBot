@@ -47,12 +47,12 @@ def parse_sysargs(parser):
         json.dump(config, config_file, indent=4)
     return config_tuple(**config)
 
-def MakeBackground(config):
+def MakeBackground():
      # Parse command-line options
     
-    dX, dY = config.dims
+    dX, dY = CONFIG.dims
 
-    random.seed(config.seed)
+    random.seed(CONFIG.seed)
 
     # Generate x and y images, with 3D shape so operations will correctly broadcast.
     xArray = np.linspace(0., 1., dX).reshape(1, -1, 1)
@@ -66,6 +66,16 @@ def MakeBackground(config):
         return xArray
     def y_var():
         return yArray
+    def circle():
+        y = np.repeat(np.linspace(-1, 1, dY).reshape(-1, 1), dX, axis=1)/2
+        x = np.repeat(np.linspace(-1, 1, dX).reshape(1, -1), dY, axis=0)/2
+        r = 1 - np.random.rand()**2
+        cx, cy = np.random.rand(2)
+        mask = np.sqrt((x - cx)**2 + (y - cy)**2) > r
+        circ = np.ones((dY, dX, 3))*randColor()
+        circ[mask] = 0
+        return circ
+
     def safe_divide(a, b, eps=1e-3):
         b[np.abs(b) < eps] = np.sign(b[np.abs(b) < eps])*eps
         b[b==0] = eps
@@ -80,10 +90,13 @@ def MakeBackground(config):
                 (0, randColor),
                 (0, x_var),
                 (0, y_var),
+                (0, circle),
+
                 (1, np.sin),
                 (1, np.cos),
                 (1, sigmoid),
                 (1, mirrored_sigmoid),
+                
                 (2, np.add),
                 (2, np.subtract),
                 (2, np.multiply),
@@ -94,7 +107,7 @@ def MakeBackground(config):
 
         funcs, weights = list(), list()
         for (n_args, function), w in zip(functions, p):
-            if (n_args > 0 and depth < config.max_depth) or (n_args == 0 and depth >= config.min_depth):
+            if (n_args > 0 and depth < CONFIG.max_depth) or (n_args == 0 and depth >= CONFIG.min_depth):
                 funcs.append((n_args, function))
                 weights.append(w)
         weights = list(np.array(weights)/sum(weights))
@@ -107,8 +120,10 @@ def MakeBackground(config):
     # with each node chosen randomly from the following list.  The first element in each tuple is the
     # number of required recursive calls and the second element is the function to evaluate the result.
     def build_img(depth=0):
-        n_args, func = get_random_function(depth, p=config.personality)
-        with open(config.save_path + f"{config.seed}_tree.txt", "a") as file:
+        n_args, func = get_random_function(depth, p=CONFIG.personality)
+        tree_file = CONFIG.history_path + f"{CONFIG.seed}_tree.txt"
+        mode = "a" if os.path.isfile(tree_file) else "w"
+        with open(tree_file, mode) as file:
             file.write("|\t"*depth + func.__name__ + "\n")
             # file.write("\t"*(depth - 1) + ("\t" + "-"*6)*(depth > 0) + func.__name__ + "\n")
 
@@ -128,8 +143,8 @@ def MakeBackground(config):
     # Convert to 8-bit, send to PIL and save
     img_8bit = np.uint8(np.rint(img.clip(0.0, 1.0) * 255.0))
     
-    Image.fromarray(img_8bit).save(config.background_path)
-    print('Seed {}; wrote output to {}'.format(config.seed, config.background_path))
+    Image.fromarray(img_8bit).save(CONFIG.background_path)
+    print('Seed {}; wrote output to {}'.format(CONFIG.seed, CONFIG.background_path))
 
 
 # This is being worked on, as wrapped text won't draw an outline for some reason
@@ -225,11 +240,10 @@ def CombineImage(text, background_path="./background.png", output_path="./output
     print('Text written')
 
 
-def postToFacebook(post_text, filepath="./output.png", post=True):
+def postToFacebook(post_text, filepath="./output.png", post=True, token=""):
     #obvs token is hidden
     if not post:
         return
-    token = ""
     graph = facebook.GraphAPI(token)
     with open(filepath, 'rb') as image_file:
         post_id = graph.put_photo(image = image_file, message=post_text)['post_id']
@@ -241,28 +255,25 @@ def parse_cmd_args():
     parser.add_option('-o', '--output', dest='background_path', default="./background.png", help='Write output to FILE', metavar='FILE')
     parser.add_option('-d', '--dims', dest='dims', default='512x512', help='Image width x height, e.g. 320x240')
     parser.add_option('-s', '--seed', dest='seed', default=int(1000 * time.time()), help='Random seed (uses system time by default)')
-    parser.add_option('-D', '--default_config', dest='default', default=False, action="store_true", help='Use default configuration file.')
+    parser.add_option('-D', '--default_CONFIG', dest='default', default=False, action="store_true", help='Use default CONFIGuration file.')
     
     config = parse_sysargs(parser)
     return config
     
-def log_image(config):
+def log_image():
 
-    if not os.path.isdir(config.save_path):
-        os.makedirs(config.save_path)
-
-    with Image.open(config.output_path) as output_file:
-        filename = config.output_path.split("/")[-1].split(".")[0]
-        filename += "_" + str(config.seed)
+    with Image.open(CONFIG.output_path) as output_file:
+        filename = CONFIG.output_path.split("/")[-1].split(".")[0]
+        filename += "_" + str(CONFIG.seed)
         filename += ".png"
-        history_path = join(config.save_path, filename)
+        history_path = join(CONFIG.history_path, filename)
         output_file.save(history_path, optimize=True)
 
-    with Image.open(config.background_path) as background_file:
-        filename = config.background_path.split("/")[-1].split(".")[0]
-        filename += "_" + str(config.seed)
+    with Image.open(CONFIG.background_path) as background_file:
+        filename = CONFIG.background_path.split("/")[-1].split(".")[0]
+        filename += "_" + str(CONFIG.seed)
         filename += ".png"
-        history_path = join(config.save_path, filename)
+        history_path = join(CONFIG.history_path, filename)
         background_file.save(history_path, optimize=True)
 
 def log_title(seed, title):
@@ -271,56 +282,61 @@ def log_title(seed, title):
         text = "{}\t{}\t{}\n".format(timestamp, seed, title)
         log_file.write(text)
 
-def restart(config):
-    if os.path.isdir(config.save_path):
-        shutil.rmtree(config.save_path)
+def restart():
+    if os.path.isdir(CONFIG.history_path):
+        shutil.rmtree(CONFIG.history_path)
     if os.path.isfile("./log.txt"):
         os.remove("./log.txt")
 
 def job():
-    config = parse_cmd_args()
+    global CONFIG
+    CONFIG = parse_cmd_args()
+
+    if CONFIG.history_path is not None and not os.path.isdir(CONFIG.history_path):
+        os.makedirs(CONFIG.history_path)
+
     title = None
     while title is None:
-        sequence_length = np.random.randint(config.min_sequence_length, config.max_sequence_length + 1)
-        title = makeText(config.quotes_path,
-                         config.markov_model_state_size,
+        sequence_length = np.random.randint(CONFIG.min_sequence_length, CONFIG.max_sequence_length + 1)
+        title = makeText(CONFIG.quotes_path,
+                         CONFIG.markov_model_state_size,
                          sequence_length)
     title = title.lower()
 
     print(title)
     
-    combine_args = (config.background_path,
-                    config.output_path,
-                    config.font_path)
-    post_args = (config.output_path,
-                 config.post_to_facebook)
+    combine_args = (CONFIG.background_path,
+                    CONFIG.output_path,
+                    CONFIG.font_path)
+    post_args = (CONFIG.output_path,
+                 CONFIG.post_to_facebook)
     # Try/Except is a basic way of keeping the bot up
     # while the image or text can fail to generate
     # try:
-    try:
-        MakeBackground(config)
-    except:
-        title = "failed"
-        pass
+    # try:
+    MakeBackground()
+    # except:
+        # title = "failed"
+        # pass
     CombineImage(title, *combine_args)
     postToFacebook(title, *post_args)
 
-    if config.save_path is not None:
-        log_image(config)
+    if CONFIG.history_path is not None:
+        log_image()
 
     # except:
     #     print("Background failed to generate")
     #     CombineImage("failed", *combine_args)
     #     postToFacebook("failed", *post_args)
-    log_title(config.seed, title)
+    log_title(CONFIG.seed, title)
 
 if __name__ == '__main__':
 
     if get_config("restart"):
-        config = load_default_config()
-        restart(config)
+        CONFIG = load_default_config()
+        restart()
 
-    delay = get_config("post_delay_seconds")
+    delay = CONFIG.post_delay_seconds
     schedule.every(delay).seconds.do(job).run()
     
     while True:
