@@ -24,7 +24,7 @@ def get_config(key):
     config = load_default_config()._asdict()
     return config[key]
 
-def makeText(quotes_path, state_size=2, sequence_length=50):
+def make_text(quotes_path, state_size=2, sequence_length=50):
     # Get raw text as string.
     with open(quotes_path, encoding='utf8') as quote_file:
        text = quote_file.read()
@@ -47,7 +47,7 @@ def parse_sysargs(parser):
         json.dump(config, config_file, indent=4)
     return config_tuple(**config)
 
-def MakeBackground():
+def make_background():
      # Parse command-line options
     
     dX, dY = CONFIG.dims
@@ -149,7 +149,7 @@ def MakeBackground():
 
 # This is being worked on, as wrapped text won't draw an outline for some reason
 # as such, the max text size is 50 chars so it does not have to wrap
-def TextWrap(text, font, max_width):
+def text_wrap(text, font, max_width):
 
     lines = []
 
@@ -175,7 +175,7 @@ def TextWrap(text, font, max_width):
         return lines
 
 
-def CombineImage(text, background_path="./background.png", output_path="./output.png", font_path="./zalgo.ttf"):
+def combine_image(text, background_path="./background.png", output_path="./output.png", font_path="./zalgo.ttf"):
 
     #make the new image
     img = Image.open(background_path)
@@ -222,9 +222,9 @@ def CombineImage(text, background_path="./background.png", output_path="./output
     #check text's length to see if we need to wrap
     if len(text) >= 55:
 
-        WrappedText1 = TextWrap(text, fnt, image_size[0])
+        wrapped_text = text_wrap(text, fnt, image_size[0])
 
-        for lines in WrappedText1:
+        for lines in wrapped_text:
 
             if lines == None:
                 break
@@ -240,7 +240,7 @@ def CombineImage(text, background_path="./background.png", output_path="./output
     print('Text written')
 
 
-def postToFacebook(post_text, filepath="./output.png", post=True, token=""):
+def post_to_facebook(post_text, filepath="./output.png", post=True, token=""):
     #obvs token is hidden
     if not post:
         return
@@ -259,22 +259,21 @@ def parse_cmd_args():
     
     config = parse_sysargs(parser)
     return config
-    
+
+def rename_with_seed(filename):
+    filename = filename.split("/")[-1].split(".")[0]
+    filename += "_" + str(CONFIG.seed)
+    filename += ".png"
+    return filename
+
 def log_image():
+    if CONFIG.history_path is not None:
+        for filename in [CONFIG.output_path, CONFIG.background_path]:
+            with Image.open(filename) as file:
+                filename = rename_with_seed(filename)
+                history_path = join(CONFIG.history_path, filename)
+                file.save(history_path, optimize=True)
 
-    with Image.open(CONFIG.output_path) as output_file:
-        filename = CONFIG.output_path.split("/")[-1].split(".")[0]
-        filename += "_" + str(CONFIG.seed)
-        filename += ".png"
-        history_path = join(CONFIG.history_path, filename)
-        output_file.save(history_path, optimize=True)
-
-    with Image.open(CONFIG.background_path) as background_file:
-        filename = CONFIG.background_path.split("/")[-1].split(".")[0]
-        filename += "_" + str(CONFIG.seed)
-        filename += ".png"
-        history_path = join(CONFIG.history_path, filename)
-        background_file.save(history_path, optimize=True)
 
 def log_title(seed, title):
     with open("./log.txt", "a") as log_file:
@@ -298,7 +297,7 @@ def job():
     title = None
     while title is None:
         sequence_length = np.random.randint(CONFIG.min_sequence_length, CONFIG.max_sequence_length + 1)
-        title = makeText(CONFIG.quotes_path,
+        title = make_text(CONFIG.quotes_path,
                          CONFIG.markov_model_state_size,
                          sequence_length)
     title = title.lower()
@@ -313,21 +312,20 @@ def job():
     # Try/Except is a basic way of keeping the bot up
     # while the image or text can fail to generate
     # try:
-    # try:
-    MakeBackground()
-    # except:
-        # title = "failed"
-        # pass
-    CombineImage(title, *combine_args)
-    postToFacebook(title, *post_args)
+    try:
+        make_background()
+    except:
+        title = "failed"
+        pass
+    combine_image(title, *combine_args)
+    post_to_facebook(title, *post_args)
 
-    if CONFIG.history_path is not None:
-        log_image()
+    log_image()
 
     # except:
     #     print("Background failed to generate")
-    #     CombineImage("failed", *combine_args)
-    #     postToFacebook("failed", *post_args)
+    #     combine_image("failed", *combine_args)
+    #     post_to_facebook("failed", *post_args)
     log_title(CONFIG.seed, title)
 
 if __name__ == '__main__':

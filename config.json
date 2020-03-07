@@ -28,7 +28,7 @@
         512
     ],
     "markov_model_state_size": 3,
-    "seed": 1583542862405,
+    "seed": 1583544075192,
     "history_path": "./history/",
     "restart": true
 }
