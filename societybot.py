@@ -6,7 +6,6 @@ from PIL import Image
 import os
 from os.path import join
 import shutil
-from build import BUILD_FUNCTIONS
 from config import get_config, load_default_config
 from command import parse_cmd_args
 from build import make_background, combine_image

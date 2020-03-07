@@ -22,7 +22,6 @@ def get_random_function(depth=0, min_depth=5, max_depth=15, p=None):
             funcs.append((n_args, function))
             weights.append(w)
     weights = list(np.array(weights)/sum(weights))
-
     idx = np.random.choice(range(len(funcs)), p=weights)
     n_args, func = funcs[idx]
     return n_args, func
@@ -35,19 +34,22 @@ def build_img(depth=0, weights=None, log_filepath="tree.txt", seed=42):
         return func(*args)
     return _build_img()
 
-
 def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=None, log_path=None, personality=None):
     # Recursively build an image using a random function.  Functions are built as a parse tree top-down,
     # with each node chosen randomly from the following list.  The first element in each tuple is the
     # number of required recursive calls and the second element is the function to evaluate the result.
     random.seed(seed)
     log_filepath = join(log_path, f"tree_{seed}.txt")
-    img = build_img(weights=personality, log_filepath=log_filepath, seed=seed)
-    # Ensure it has the right dimensions
-    img = np.tile(img, (dx // img.shape[0], dy // img.shape[1], 3 // img.shape[2]))
-
+    
+    while True:
+    
+        img = build_img(weights=personality, log_filepath=log_filepath, seed=seed)
+        # Ensure it has the right dimensions    
+        if img.shape == (dx, dy, 3):
+            break
+        
     # Convert to 8-bit, send to PIL and save
-    img_8bit = np.uint8(np.rint(img.clip(0.0, 1.0) * 255.0))
+    img_8bit = np.rint(img.clip(0.0, 1.0)* 255.0).astype(np.uint8)
     
     if save_filepath is not None:
         Image.fromarray(img_8bit).save(save_filepath)
