@@ -1,5 +1,6 @@
 import numpy as np
 from config import get_config
+from scipy.ndimage import convolve
 
 # Adaptor functions for the recursive generator
 # Note: using python's random module because numpy's doesn't handle seeds longer than 32 bits.
@@ -35,12 +36,6 @@ def cone(dx=None, dy=None, ellipsoid=True):
     return ellipsoid
 
 def circle(ellipsoid=True, dx=None, dy=None):
-    # cx, cy = random_point()
-    # x, y = linear_mesh(dx, dy)
-    # rx, ry = random_radius()
-    # mask = np.sqrt(((x - cx) / rx)**2 + ((y - cy) / ry)**2) > r
-    # circ = np.ones((dy, dx, 3))*rand_color()
-    # circ[mask] *= 0
     base = cone(dx, dy, ellipsoid).squeeze()
     circ = np.ones((dy, dx, 3)) * rand_color()
     circ[base > 1] = 0
@@ -62,6 +57,47 @@ def sigmoid(x):
 def mirrored_sigmoid(x):
     return 1 / (1 + np.exp(x))    
 
+
+gaussian_kernel_5 = np.array([[1, 4, 6, 4, 6],
+                              [4, 16, 24, 16, 4],
+                              [6, 24, 36, 24, 6],
+                              [4, 16, 24, 16, 4],
+                              [1, 4, 6, 4, 1]])/256
+gaussian_kernel_3 = np.array([[1, 2, 1],
+                              [2, 4, 2],
+                              [1, 2, 1]])/16
+sharpen_kernel_5 = np.array([[1, 4, 6, 4, 6],
+                             [4, 16, 24, 16, 4],
+                             [6, 24, -476, 24, 6],
+                             [4, 16, 24, 16, 4],
+                             [1, 4, 6, 4, 1]])*-1/256
+sharpen_kernel_3 = np.array([[0, -1, 0],
+                             [-1, 5, -1],
+                             [0, -1, 0]])
+
+def sharpen(x):
+    channels = [np.expand_dims(convolve(c, sharpen_kernel_5), 2) for c in x.transpose(2, 0, 1)]
+    sharpened = np.concatenate(channels, axis=2)
+    return sharpened
+
+def blur(x):
+    channels = [np.expand_dims(convolve(c, gaussian_kernel_5), 2) for c in x.transpose(2, 0, 1)]
+    blurred = np.concatenate(channels, axis=2)
+    return blurred
+
+def swap_phase_amplitude(a, b, axes=[0, 1]):
+    fft_a = np.fft.fft2(a, axes=axes)
+    fft_b = np.fft.fft2(b, axes=axes)
+    abs_a = np.abs(fft_a)
+    abs_b = np.abs(fft_b)
+    phi_a = np.arctan2(np.imag(fft_a), np.real(fft_a))
+    phi_b = np.arctan2(np.imag(fft_b), np.real(fft_b))
+    swapped_a = abs_b*(np.cos(phi_a) + np.sin(phi_a)*1j)
+    swapped_b = abs_a*(np.cos(phi_b) + np.sin(phi_b)*1j)
+    output_a = np.abs(np.fft.ifft2(swapped_a, axes=axes)).astype(np.uint8)
+    output_b = np.abs(np.fft.ifft2(swapped_b, axes=axes)).astype(np.uint8)
+    return output_a#, output_b
+
 BUILD_FUNCTIONS = ((0, rand_color),
                    (0, x_var),
                    (0, y_var),
@@ -71,10 +107,13 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (1, np.sin),
                    (1, np.cos),
                    (1, sigmoid),
+                   (1, sharpen),
+                   (1, blur),
 
                    (2, np.add),
                    (2, np.subtract),
                    (2, np.multiply),
+                   (2, safe_divide),
                    (2, saddle),
-                   (2, safe_divide))
+                   (2, swap_phase_amplitude))
                    # 12 functions
