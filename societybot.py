@@ -10,7 +10,7 @@ from config import get_config, load_default_config
 from command import parse_cmd_args
 from build import make_background, combine_image
 
-def make_text(quotes_path, state_size=2, sequence_length=50):
+def make_text(quotes_path, state_size=2, sequence_length=50, seed=42):
     # Get raw text as string.
     with open(quotes_path, encoding='utf8') as quote_file:
        text = quote_file.read()
@@ -18,6 +18,7 @@ def make_text(quotes_path, state_size=2, sequence_length=50):
     # Build the model.
     text_model = markovify.NewlineText(text, state_size=state_size)
     
+    random.seed(seed)
     return text_model.make_short_sentence(sequence_length)
 
 def post_to_facebook(post_text, filepath="./output.png", post=True, token=""):
@@ -66,10 +67,10 @@ def job():
     while title is None:
         sequence_length = np.random.randint(CONFIG.min_sequence_length, CONFIG.max_sequence_length + 1)
         title = make_text(CONFIG.quotes_path,
-                         CONFIG.markov_model_state_size,
-                         sequence_length)
+                          CONFIG.markov_model_state_size,
+                          sequence_length,
+                          CONFIG.seed)
     title = title.lower()
-    
     make_background_kwargs = dict(dx=CONFIG.dims[0],
                                   dy=CONFIG.dims[1],
                                   min_depth=CONFIG.min_depth,
@@ -79,6 +80,7 @@ def job():
                                   log_path=CONFIG.tree_log_path,
                                   personality=CONFIG.personality)
     combine_kwargs = dict(background_path=CONFIG.background_path,
+                          fontsize=CONFIG.fontsize,
                           output_path=CONFIG.output_path,
                           font_path=CONFIG.font_path)
     post_kwargs = dict(filepath=CONFIG.output_path,

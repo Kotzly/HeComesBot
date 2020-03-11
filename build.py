@@ -3,6 +3,7 @@ import random
 from functions import BUILD_FUNCTIONS
 from PIL import Image, ImageDraw, ImageFont
 from os.path import join, isfile
+import config
 
 def log_tree_to_file(func, depth, log_filepath="tree.txt"):
     if log_filepath is not None:
@@ -26,13 +27,18 @@ def get_random_function(depth=0, min_depth=5, max_depth=15, p=None):
     n_args, func = funcs[idx]
     return n_args, func
 
-def build_img(depth=0, weights=None, log_filepath="tree.txt", seed=42):
+def build_img(depth=0, dx=100, dy=100, weights=None, log_filepath="tree.txt", seed=42):
     def _build_img(depth=0):
         n_args, func = get_random_function(depth, p=weights)
         log_tree_to_file(func, depth, log_filepath=log_filepath)
         args = [_build_img(depth + 1) for i in range(n_args)]
-        return func(*args)
-    return _build_img()
+        kwargs = dict(dx=dx, dy=dy) if n_args == 0 else {}
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            print(func.__name__, str(e))
+            raise e
+    return _build_img(depth=0)
 
 def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=None, log_path=None, personality=None):
     # Recursively build an image using a random function.  Functions are built as a parse tree top-down,
@@ -42,12 +48,12 @@ def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=No
     log_filepath = join(log_path, f"tree_{seed}.txt")
     
     while True:
-    
-        img = build_img(weights=personality, log_filepath=log_filepath, seed=seed)
+        config
+        img = build_img(dx=dx, dy=dy, weights=personality, log_filepath=log_filepath, seed=seed)
         # Ensure it has the right dimensions    
-        if img.shape == (dx, dy, 3):
+        if img.shape == (dy, dx, 3):
             break
-        
+
     # Convert to 8-bit, send to PIL and save
     img_8bit = np.rint(img.clip(0.0, 1.0)* 255.0).astype(np.uint8)
     
@@ -82,10 +88,10 @@ def text_wrap(text, font, max_width):
                 i += 1
             #when the line is longer than the max width, add line to array
             lines.append(line)
-        return lines
+    return lines
 
 
-def combine_image(text, background_path="./background.png", output_path="./output.png", font_path="./zalgo.ttf"):
+def combine_image(text, fontsize=40, background_path="./background.png", output_path="./output.png", font_path="./zalgo.ttf"):
 
     #make the new image
     img = Image.open(background_path)
@@ -98,7 +104,7 @@ def combine_image(text, background_path="./background.png", output_path="./outpu
     textcolour = (0, 0, 0)
     text_outline = (255, 255, 255)
     #create the font and set text size
-    fnt = ImageFont.truetype(font_path, 40, encoding="unic")
+    fnt = ImageFont.truetype(font_path, fontsize, encoding="unic")
 
     draw = ImageDraw.Draw(img)
     #Set outline amount, sets how many times we loop
