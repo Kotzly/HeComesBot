@@ -62,7 +62,7 @@ The file `config.json` controls the program variables and the image parameters. 
 * **max_depth** - Max depth of the parsing tree. High values (>30) are not recommended.
 * **min_depth** - Minimum depth of the parsing tree.
 * **dims** - The dimensions of the generated image. It is a list, defaults to `[512, 512]`.
-* **markov_model_state_size** - Number of words in the Markov Model state, for generating text. A high value can make the text generation very slow.
+* **markov_model_state_size** - Number of words in the Markov Model state, for generating text. It is the complexity of the markov model. A high value can make the text generation very slow.
 * **fontsize** - The font size of the image. Defaults to 40.
 * **seed** - Seed for generating image and text. Defaults to `null`, so the bot will generate a new seed for each image. If you input a seed the bot will generate the same image over and over again.
 * **restart** - Can be `true` or `false`. Whether you want to delete the past generated images in `history_path` and delete the log file `log.txt`.
@@ -71,7 +71,8 @@ The file `config.json` controls the program variables and the image parameters. 
 
 # Bot personality
 
-The `personality.json` file is the brain of the bot. It is how it thinks when generating the images.
+The `personality.json` file is the brain of the bot. It is how it thinks when generating the images. It defines the probability that each function has to be chosen. So setting a high value for `cone` will make the bot generate more circles and ellipsoids in the images, and setting a low value for `sin` and `cos` will make images that are less "curvy".
+
 The outer keys ("0", "1", "2") are the level of the used functions. For example, the level 0 functions are always used when the bot reaches the leaf of the parsing tree, so they are the image's building blocks. Level 1 are the altering functions, they change a image by applying a transformation. Level 2 functions are the merging ones, they take two images (from 2 branches of the parsing tree) and merge them (by adding them, subtrating them, or any operation defined there). Levels greater than 2 can be implemented, and would be transformations that would use more than 2 images as inputs.
 
 Anyways, in the personality file each funtion is assigned with a number. This number reflects the not normalized probability that that function will be randomly picked when the bot builds it's parsing tree. The higher the value, the more often the bot will use it, and a zero value means the bot won't use the function. For example:
