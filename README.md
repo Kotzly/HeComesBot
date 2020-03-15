@@ -17,13 +17,13 @@ First install Anaconda in your computer. You have the option to not install it, 
 
 To install Anaconda go to [Anaconda's website](https://www.anaconda.com/). You can also install the minimal Anaconda version, [Miniconda](https://docs.conda.io/en/latest/miniconda.html).
 
-Them open the **anaconda prompt** and create the environment you will be using to run the bot:
+Open the **anaconda prompt** and create the environment you will be using to run the bot:
 ```bash
 conda create -n hecomesbot
 conda activate hecomesbot
 ```
 
-Them install **pip** and the requirements:
+Install **pip** and the bot requirements:
 ```bash
 conda install pip
 pip install -r requirements.txt
@@ -33,7 +33,7 @@ Now you are good to go!
 
 # Usage
 
-You can run `python societybot.py` for a quick demonstration.
+You can run `python societybot.py` for the default configuration.
 Use `python societybot.py [options]` for configurations. The options are:
 * **-s** - Seed for generating images and texts.
 * **-d** - Dimensions of the generated image (e.g. `python societybot.py -d 500x500`). Defaults to 512x512
