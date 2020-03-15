@@ -51,7 +51,7 @@ The file `config.json` controls the program variables and the image parameters. 
 * **quotes_path** - Path to `quotes.txt` file.
 * **background_path** - Path to the temporary background image file.
 * **output_path** - Path to the temporary output image file (background with text).
-* **font_path** - Path to the `*.ttf` font file,
+* **font_path** - Path to the `*.ttf` font file.
 * **history_path** - Path to the folder where you want to save the past generated background and outputs. Set to `null` if you don't want to save them.
 * **tree_log_path** - Path to the folder where you want to save the parsing tree of the past generated images. Set to `null` if you don't want to save them.
 * **personality_filepath** - Path to the `*.json` personality file.
@@ -67,7 +67,7 @@ The file `config.json` controls the program variables and the image parameters. 
 * **seed** - Seed for generating image and text. Defaults to `null`, so the bot will generate a new seed for each image. If you input a seed the bot will generate the same image over and over again.
 * **restart** - Can be `true` or `false`. Whether you want to delete the past generated images in `history_path` and delete the log file `log.txt`.
 * **token** - Token to the facebook API.
-* **personality** - Must be `null`. This variable is just a placeholder, don't change it
+* **personality** - Must be `null`. This variable is just a placeholder, don't change it.
 
 # Bot personality
 
