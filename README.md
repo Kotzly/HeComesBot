@@ -2,7 +2,7 @@
 
 Source code for the Facebook bot HeComes Bot 666.
 
-![alt text](./example.png "Example of generated image")
+![alt text](./example_image.png "Example of generated image")
 
 The bot was inspired by an article I read on generating images with python. 
 
