@@ -2,6 +2,8 @@
 
 Source code for the Facebook bot HeComes Bot 666.
 
+![alt text](./example.png "Example of generated image")
+
 The bot was inspired by an article I read on generating images with python. 
 
 The text file was made by a scraper (not in this source code) and a base file of speeches
@@ -37,10 +39,10 @@ Use `python societybot.py [options]` for configurations. The options are:
 * **-d** - Dimensions of the generated image (e.g. `python societybot.py -d 500x500`). Defaults to 512x512
 * **-o** - Output path of the generated background image.
 * **-f** - Fontsize. Defaults to 40 (fits well with the default image size).
-* **-D** - It is a flag. Set it if you want to use the configuration defined at `config.json`.
+* **-D** - It is a flag. Set it if you want to use the configuration defined at `config.json`. E.g `python societybot.py -D -d 500x300`.
 * **-h** - Show help.
 
-The python call is limited, for full control use the `-D` flag and change `config.json` and `personality.json` files.
+The defaults options are limited, for full control use the `-D` flag and change `config.json` and `personality.json` files.
 
 # Advanced configuration
 

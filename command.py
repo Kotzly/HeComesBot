@@ -27,6 +27,6 @@ def parse_cmd_args():
     parser.add_option('-d', '--dims', dest='dims', default='512x512', help='Image width x height, e.g. 320x240')
     parser.add_option('-s', '--seed', dest='seed', default=int(1000 * time.time()), help='Random seed (uses system time by default)')
     parser.add_option('-f', '--fontsize', dest='fontsize', default=40, help='Fontsize for text in image.')
-    parser.add_option('-D', '--default_config', dest='default', default=False, action="store_true", help='Use default CONFIGuration file.')
+    parser.add_option('-D', '--default_config', dest='default', default=False, action="store_true", help='Use default Configuration file.')
     config = parse_sysargs(parser)
     return config
