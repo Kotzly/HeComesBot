@@ -116,4 +116,5 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (2, safe_divide),
                    (2, saddle),
                    (2, swap_phase_amplitude))
+BUILD_FUNCTIONS = sorted(BUILD_FUNCTIONS, key=lambda x: x[1].__name__)
                    # 12 functions

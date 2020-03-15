@@ -3,25 +3,9 @@
     "background_path": "./background.png",
     "output_path": "./output.png",
     "font_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/zalgo.ttf",
-    "personality": [
-        1,
-        1,
-        1,
-        0,
-        0.3,
-        1,
-        1,
-        0,
-        0.4,
-        0.2,
-        1,
-        1,
-        1,
-        1,
-        0,
-        0
-    ],
-    "fontsize": 60,
+    "history_path": null,
+    "tree_log_path": null,
+    "personality_filepath": "./personality.json",
     "min_sequence_length": 50,
     "max_sequence_length": 125,
     "post_to_facebook": false,
@@ -29,13 +13,13 @@
     "max_depth": 15,
     "min_depth": 5,
     "dims": [
-        1400,
-        900
+        512,
+        512
     ],
     "markov_model_state_size": 3,
-    "seed": 1583901737995,
-    "history_path": "./history/",
+    "fontsize": 60,
+    "seed": 1584232163166,
     "restart": true,
-    "tree_log_path": "./history/",
-    "token": "123"
+    "token": "123",
+    "personality": null
 }

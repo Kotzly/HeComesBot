@@ -1,0 +1,25 @@
+{
+    "0": {
+        "rand_color": 1,
+        "x_var": 1,
+        "y_var": 1,
+        "circle": 0,
+        "cone": 0
+    },
+    "1": {
+        "cos": 1,
+        "sin": 1,
+        "blur": 0,
+        "sharpen": 0,
+        "sigmoid": 0
+    },
+    "2": {
+        "add": 1,
+        "subtract": 1,
+        "multiply": 1,
+        "safe_divide": 1,
+        "saddle": 0,
+        "swap_phase_amplitude": 0
+    }
+}
+

@@ -1,6 +1,6 @@
 import optparse
 import json
-from config import load_default_config, config_tuple
+from config import load_default_config, config_tuple, load_personality_list
 import time
 
 def parse_sysargs(parser):
@@ -15,6 +15,8 @@ def parse_sysargs(parser):
         config.update(input_config)
         with open("./config.json", "w") as config_file:
             json.dump(config, config_file, indent=4)
+    personality = load_personality_list(config["personality_filepath"])
+    config.update({"personality":personality})
     return config_tuple(**config)
 
 def parse_cmd_args():

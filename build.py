@@ -4,6 +4,30 @@ from functions import BUILD_FUNCTIONS
 from PIL import Image, ImageDraw, ImageFont
 from os.path import join, isfile
 import config
+import markovify
+import os
+
+def random_sequence_length(max_length, min_length):
+    if max_length is None and min_length is not None:
+        sequence_length = min_length
+    elif max_length is not None and min_length is not None:
+        sequence_length = max_length
+    elif max_length is not None and min_length is not None:
+        sequence_length = np.random.randint(min_length, max_length + 1)
+    else:
+        sequence_length = 1
+    return sequence_length
+
+def make_text(quotes_path, max_length=None, min_length=None, state_size=2, seed=42):
+    with open(quotes_path, encoding='utf8') as quote_file:
+       text = quote_file.read()
+
+    text_model = markovify.NewlineText(text, state_size=state_size)
+    sequence_length = random_sequence_length(max_length, min_length)
+
+    random.seed(seed)
+    return text_model.make_short_sentence(sequence_length)
+
 
 def log_tree_to_file(func, depth, log_filepath="tree.txt"):
     if log_filepath is not None:
@@ -45,14 +69,18 @@ def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=No
     # with each node chosen randomly from the following list.  The first element in each tuple is the
     # number of required recursive calls and the second element is the function to evaluate the result.
     random.seed(seed)
-    log_filepath = join(log_path, f"tree_{seed}.txt")
+    log_filepath = join(log_path, f"tree_{seed}.txt") if log_path is not None else None
     
+    fail_counter = 0
     while True:
-        config
         img = build_img(dx=dx, dy=dy, weights=personality, log_filepath=log_filepath, seed=seed)
         # Ensure it has the right dimensions    
         if img.shape == (dy, dx, 3):
             break
+        else:
+            if fail_counter > 10:
+                raise Exception("Too many failures when building image.")
+            print(f"Failed build image (wrong dimensions). Trying again [{fail_counter}/{10}]")
 
     # Convert to 8-bit, send to PIL and save
     img_8bit = np.rint(img.clip(0.0, 1.0)* 255.0).astype(np.uint8)
