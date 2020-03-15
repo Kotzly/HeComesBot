@@ -42,16 +42,22 @@ def get_random_function(depth=0, min_depth=5, max_depth=15, p=None):
         p = np.ones(len(BUILD_FUNCTIONS))
 
     funcs, weights = list(), list()
+
     for (n_args, function), w in zip(BUILD_FUNCTIONS, p):
         if (n_args > 0 and depth < max_depth) or (n_args == 0 and depth >= min_depth):
             funcs.append((n_args, function))
             weights.append(w)
+
     weights = list(np.array(weights)/sum(weights))
     idx = np.random.choice(range(len(funcs)), p=weights)
     n_args, func = funcs[idx]
+
     return n_args, func
 
 def build_img(depth=0, dx=100, dy=100, weights=None, log_filepath="tree.txt", seed=42):
+
+    np.random.seed(seed % (2**32 - 1))
+    
     def _build_img(depth=0):
         n_args, func = get_random_function(depth, p=weights)
         log_tree_to_file(func, depth, log_filepath=log_filepath)
@@ -65,10 +71,7 @@ def build_img(depth=0, dx=100, dy=100, weights=None, log_filepath="tree.txt", se
     return _build_img(depth=0)
 
 def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=None, log_path=None, personality=None):
-    # Recursively build an image using a random function.  Functions are built as a parse tree top-down,
-    # with each node chosen randomly from the following list.  The first element in each tuple is the
-    # number of required recursive calls and the second element is the function to evaluate the result.
-    random.seed(seed)
+
     log_filepath = join(log_path, f"tree_{seed}.txt") if log_path is not None else None
     
     fail_counter = 0
@@ -78,8 +81,9 @@ def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=No
         if img.shape == (dy, dx, 3):
             break
         else:
+            fail_counter += 1
             if fail_counter > 10:
-                raise Exception("Too many failures when building image.")
+                raise Exception(f"Too many failures when building image (got {img.shape})")
             print(f"Failed build image (wrong dimensions). Trying again [{fail_counter}/{10}]")
 
     # Convert to 8-bit, send to PIL and save
@@ -101,10 +105,7 @@ def text_wrap(text, font, max_width):
     if font.getsize(text)[0] <= max_width:
         lines.append(text)
     else:
-        #split text by space to find words
         words = text.split(' ')
-
-        #add each word to a line while the line is shorter than the image
         i = 0
         while i < len(words):
             line = ''

@@ -3,8 +3,8 @@
     "background_path": "./background.png",
     "output_path": "./output.png",
     "font_path": "C:/Users/Paulo/Documents/GIT/HeComesBot/zalgo.ttf",
-    "history_path": null,
-    "tree_log_path": null,
+    "history_path": "./history",
+    "tree_log_path": "./history",
     "personality_filepath": "./personality.json",
     "min_sequence_length": 50,
     "max_sequence_length": 125,
@@ -17,8 +17,8 @@
         512
     ],
     "markov_model_state_size": 3,
-    "fontsize": 60,
-    "seed": 1584232163166,
+    "fontsize": 40,
+    "seed": null,
     "restart": true,
     "token": "123",
     "personality": null
