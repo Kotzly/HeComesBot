@@ -1,6 +1,7 @@
 import numpy as np
 from config import get_config
 from scipy.ndimage import convolve
+from scipy.interpolate import NearestNDInterpolator
 
 # Adaptor functions for the recursive generator
 # Note: using python's random module because numpy's doesn't handle seeds longer than 32 bits.
@@ -50,13 +51,17 @@ def safe_divide(a, b, eps=1e-3):
     b[b==0] = eps
     return np.divide(a, b)
 
+def safe_modulus(a, b, eps=1e-10):
+    b[b==0] = eps
+    modulus =  np.mod(a, b)
+    return modulus
+
 def sigmoid(x):
     x = (x - .5)*6
     return 1 / (1 + np.exp(-x))
 
 def mirrored_sigmoid(x):
     return 1 / (1 + np.exp(x))    
-
 
 gaussian_kernel_5 = np.array([[1, 4, 6, 4, 6],
                               [4, 16, 24, 16, 4],
@@ -96,7 +101,46 @@ def swap_phase_amplitude(a, b, axes=[0, 1]):
     swapped_b = abs_a*(np.cos(phi_b) + np.sin(phi_b)*1j)
     output_a = np.abs(np.fft.ifft2(swapped_a, axes=axes)).astype(np.uint8)
     output_b = np.abs(np.fft.ifft2(swapped_b, axes=axes)).astype(np.uint8)
-    return output_a#, output_b
+    return output_a#, output_bnterp
+
+def get_angle(x, y, dx=None, dy=None):
+    return np.arctan2(dx/2 - x, dy/2 - y)
+
+def get_radius(x, y):
+    return np.sqrt(x**2 + y**2)
+
+def is_valid_shape(image):
+    if image.ndim != 3:
+        return False
+    dy, dx, channels = image.shape
+    if dy < 3 or dx < 3 or channels != 3:
+        return False
+    return True
+
+def kaleidoscope(image, n=3, phase=0):
+    if not is_valid_shape(image):
+        return image
+    start = time.time()
+    p = np.array([1, 1, .75, .6, .45])
+    p /= p.sum()
+    n = np.random.choice([3, 5, 6, 7, 8], p=p)
+    phi = 2 * np.pi / n
+    phase= np.random.rand()*phi
+
+    dx, dy, _ = image.shape
+    mesh_x, mesh_y = linear_mesh(dy, dx)
+    angles = np.arctan2(- mesh_y, mesh_x)
+    angles[angles < 0] = angles[angles < 0] + 2*np.pi
+    radiuses = get_radius(*linear_mesh(dy, dx))
+    points = np.concatenate([angles.reshape(-1, 1), radiuses.reshape(-1, 1)], axis=1)
+    def interp(x):
+        interp_funcs = [NearestNDInterpolator(points, image[:, :, c].flatten()) for c in range(3)]
+        new_channels = np.concatenate([f(x).reshape(-1, 1) for f in interp_funcs], axis=1)
+        return new_channels
+    new_angles = (angles % phi) + phase
+    new_points = np.concatenate([new_angles.reshape(-1, 1), radiuses.reshape(-1, 1)], axis=1)
+    new_image = interp(new_points).reshape(dx, dy, 3).astype(np.uint8)
+    return new_image
 
 BUILD_FUNCTIONS = ((0, rand_color),
                    (0, x_var),
@@ -109,12 +153,15 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (1, sigmoid),
                    (1, sharpen),
                    (1, blur),
+                   (1, kaleidoscope),
 
                    (2, np.add),
                    (2, np.subtract),
                    (2, np.multiply),
                    (2, safe_divide),
+                   (2, safe_modulus),
                    (2, saddle),
                    (2, swap_phase_amplitude))
+
 BUILD_FUNCTIONS = sorted(BUILD_FUNCTIONS, key=lambda x: x[1].__name__)
                    # 12 functions

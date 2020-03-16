@@ -84,7 +84,8 @@ def make_background(dx, dy, min_depth=5, max_depth=15, seed=42, save_filepath=No
             fail_counter += 1
             if fail_counter > 10:
                 raise Exception(f"Too many failures when building image (got {img.shape})")
-            print(f"Failed build image (wrong dimensions). Trying again [{fail_counter}/{10}]")
+            print(f"Failed build image (wrong dimensions). Trying again with seed {seed+1} [{fail_counter}/{10}]")
+            seed += 1
 
     # Convert to 8-bit, send to PIL and save
     img_8bit = np.rint(img.clip(0.0, 1.0)* 255.0).astype(np.uint8)

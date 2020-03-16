@@ -11,13 +11,15 @@
         "sin": 1,
         "blur": 0,
         "sharpen": 0,
-        "sigmoid": 0
+        "sigmoid": 0,
+        "kaleidoscope": 0
     },
     "2": {
         "add": 1,
         "subtract": 1,
         "multiply": 1,
         "safe_divide": 1,
+        "safe_modulus": 0,
         "saddle": 0,
         "swap_phase_amplitude": 0
     }
