@@ -39,7 +39,7 @@ Use `python societybot.py [options]` for configurations. The options are:
 * **-d** - Dimensions of the generated image (e.g. `python societybot.py -d 500x500`). Defaults to 512x512
 * **-o** - Output path of the generated background image.
 * **-f** - Fontsize. Defaults to 40 (fits well with the default image size).
-* **-D** - It is a flag. Set it if you want to use the configuration defined at `config.json`. E.g `python societybot.py -D -d 500x300`.
+* **-D** - It is a flag. Set it if you want to use the configuration defined at `config.json`. E.g `python societybot.py -D`.
 * **-h** - Show help.
 
 The defaults options are limited, for full control use the `-D` flag and change `config.json` and `personality.json` files.
@@ -90,7 +90,7 @@ The functions names are self explanatory, but some of them are worthy of being e
 * **sharpen** - Passes a sharpen filter in the image.
 * **blur** - Blur the image. Uses a gaussian kernel for convolution.
 * **sigmoid** - Apply the sigmoid function. It's output is between 0 and 1.
-* **saddle** - Apply the function `x^2 - y^2)` (called hyperbolic paraboloid, or saddle function). It is a high cost function, so it is advised to set the probability at the personality file to a low value.
+* **saddle** - Apply the function `x^2 - y^2` (called hyperbolic paraboloid, or saddle function). It is a costly function, so it is advised to set the probability at the personality file to a low value.
 * **swap_phase_amplitude** - This is an extremely costly function. It calculates two images FFT, and swaps the phase and the magnitude of them, pixel-wise, them calculates the inverse FFT. It does not always make good images, but it was a fun addition to the function pool.
 
 
