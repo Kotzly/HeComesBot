@@ -164,7 +164,7 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (1, sharpen),
                    (1, blur),
                    (1, absolute_value),
-                   (1, color_rotate)
+                   (1, color_rotate),
                    (1, kaleidoscope),
 
                    (2, np.add),

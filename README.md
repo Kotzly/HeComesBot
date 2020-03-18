@@ -92,6 +92,7 @@ The functions names are self explanatory, but some of them are worthy of being e
 * **sigmoid** - Apply the sigmoid function. It's output is between 0 and 1.
 * **saddle** - Apply the function `x^2 - y^2` (called hyperbolic paraboloid, or saddle function). It is a costly function, so it is advised to set the probability at the personality file to a low value.
 * **swap_phase_amplitude** - This is an extremely costly function. It calculates two images FFT, and swaps the phase and the magnitude of them, pixel-wise, them calculates the inverse FFT. It does not always make good images, but it was a fun addition to the function pool.
-
+* **kaileidoscope** - This function is super costly, DON'T use it for images above 400x400 (about 15000 pixels). Or use it wit a very low probability.
+* **color_rotate** - This is just a rotation in the space of colors - that means it transforms a set of colors into another. This was implemented due to the tendencies of the bot to generate the R-G-B colors more often.
 
 
