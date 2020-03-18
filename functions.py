@@ -2,6 +2,7 @@ import numpy as np
 from config import get_config
 from scipy.ndimage import convolve
 from scipy.interpolate import NearestNDInterpolator
+from scipy.spatial.transform import Rotation as R
 
 # Adaptor functions for the recursive generator
 # Note: using python's random module because numpy's doesn't handle seeds longer than 32 bits.
@@ -66,11 +67,14 @@ def mirrored_sigmoid(x):
 def absolute_value(x):
     return np.abs(x)
 
-from scipy.spatial.transform import Rotation as R
 def color_rotate(x):
-    flattened = x.reshape(-1, 3)
-    rotated = R.from_euler("zyx", np.random.rand(3)*2*np.pi).apply(flattened)
-    reshaped = rotated.reshape(*x.shape)
+    if x.shape[-1] == 3:
+        flattened = x.reshape(-1, 3)
+        rotated = R.from_euler("zyx", np.random.rand(3)*2*np.pi).apply(flattened)
+        reshaped = rotated.reshape(*x.shape)
+    else:
+        x = np.random.rand(*x.shape)
+        reshaped = x
     return reshaped
 
 gaussian_kernel_5 = np.array([[1, 4, 6, 4, 6],
