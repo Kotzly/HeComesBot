@@ -63,6 +63,16 @@ def sigmoid(x):
 def mirrored_sigmoid(x):
     return 1 / (1 + np.exp(x))    
 
+def absolute_value(x):
+    return np.abs(x)
+
+from scipy.spatial.transform import Rotation as R
+def color_rotate(x):
+    flattened = x.reshape(-1, 3)
+    rotated = R.from_euler("zyx", np.random.rand(3)*2*np.pi).apply(flattened)
+    reshaped = rotated.reshape(*x.shape)
+    return reshaped
+
 gaussian_kernel_5 = np.array([[1, 4, 6, 4, 6],
                               [4, 16, 24, 16, 4],
                               [6, 24, 36, 24, 6],
@@ -153,6 +163,8 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (1, sigmoid),
                    (1, sharpen),
                    (1, blur),
+                   (1, absolute_value),
+                   (1, color_rotate)
                    (1, kaleidoscope),
 
                    (2, np.add),

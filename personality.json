@@ -12,6 +12,8 @@
         "blur": 0,
         "sharpen": 0,
         "sigmoid": 0,
+        "absolute_value": 0,
+        "color_rotate": 0,
         "kaleidoscope": 0
     },
     "2": {
