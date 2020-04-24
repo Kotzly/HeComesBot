@@ -54,12 +54,12 @@ def get_random_function(depth=0, min_depth=5, max_depth=15, p=None):
 
     return n_args, func
 
-def build_img(max_depth=0, dx=100, dy=100, weights=None, log_filepath="tree.txt", seed=42):
+def build_img(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, log_filepath="tree.txt", seed=42):
 
     np.random.seed(seed % (2**32 - 1))
     
     def _build_img(depth=0):
-        n_args, func = get_random_function(depth, p=weights, max_depth=max_depth)
+        n_args, func = get_random_function(depth, p=weights, max_depth=max_depth, min_depth=min_depth)
         log_tree_to_file(func, depth, log_filepath=log_filepath)
         args = [_build_img(depth + 1) for i in range(n_args)]
         kwargs = dict(dx=dx, dy=dy) if n_args == 0 else {}
