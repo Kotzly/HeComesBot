@@ -49,6 +49,7 @@ The defaults options are limited, for full control use the `-D` flag and change 
 ## Video
 
 Script `video.py` can be used to generate videos using the same technique as the images. This script needs [FFmpeg](https://www.ffmpeg.org/) installed (and accessible in PATH).
+First **Set the environment variable `FFMPEG_BIN` with the `bin` folder path of `FFmpeg`.**
 Use `python video.py [options]` for configurations. The options are:
 * **-n** - Number of videos to create.
 * **-f** - FPS.
