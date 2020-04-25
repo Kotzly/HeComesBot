@@ -56,6 +56,8 @@ Use `python video.py [options]` for configurations. The options are:
 * **-W** - Width of the video.
 * **-s** - Alpha step. Bigger alphas mean bigger difference in successive frames of the video. Defaults to 0.003.
 * **-d** - Duration of the video.
+* **-S** - Seed to use. If set, only one video is generated.
+* **-e** - Extension of the video file. Use `video.py -h` for possible extensions.
 
 # Advanced configuration
 

@@ -64,13 +64,16 @@ def parse_cmd_args():
     parser.add_option('-W', '--width', dest='width', type=int, default=256, help='Video width.')
     parser.add_option('-s', '--step', dest='step', type=float, default=0.003, help='Alpha step for image generation.')
     parser.add_option('-d', '--duration', dest='duration', type=int, default=10, help='Video duration.')
+    parser.add_option('-S', '--seed', dest='seed', type=int, default=None, help='Seed.')
+    parser.add_option('-e', '--extension', dest='ext', type=str, default="webm", help='Extension. Can be webm, avi, mp4.')
     args, _ = parser.parse_args()
     return args
 
 args = parse_cmd_args()
+n_videos = args.n_videos if args.seed is None else 1
 
-for i, video_n in enumerate(rand(args.n_videos)):
-    video_n = int(video_n*1e9)
+for i, video_n in enumerate(rand(n_videos)):
+    video_n = int(video_n * 1e9) if args.seed is None else args.seed
     try:
         os.mkdir("frames")
     except:
@@ -88,4 +91,4 @@ for i, video_n in enumerate(rand(args.n_videos)):
     for step in range(args.fps*args.duration):
         func(step)
 
-    os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%05d.png videos/video-{i}.webm")
+    os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%05d.png videos/video-{i}.{args.ext}")
