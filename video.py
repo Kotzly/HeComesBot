@@ -70,7 +70,7 @@ def parse_cmd_args():
 def worker_fn(tree, step):
     img = build_img_from_tree(tree, step=step)
     img = np.rint(img.clip(0.0, 1.0)* 255.0).astype(np.uint8)
-    Image.fromarray(img).save("frames/image-{}.png".format(str(step).rjust(5, "0")))
+    Image.fromarray(img).save("frames/image-{}.png".format(str(step).rjust(8, "0")))
 
 if __name__ == "__main__":
 
@@ -101,11 +101,11 @@ if __name__ == "__main__":
 
         tree = build_tree(min_depth=6, max_depth=15, seed=video_n, weights=p, dx=args.width, dy=args.height, alpha=4e-3)
 
-        worker_args = [(tree, step) for step in range(args.fps*args.duration)]
+        worker_args = [(tree, step/args.fps) for step in range(args.fps*args.duration)]
         with mp.Pool(args.n_process) as pool:
             pool.starmap(worker_fn, worker_args)
         
 
         bitrate_arg = "" if args.bitrate is None else f"-b {args.bitrate}"
 
-        os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%05d.png {bitrate_arg} videos/video-{i+start_i}.{args.ext}")
+        os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%08d.png {bitrate_arg} videos/video-{i+start_i}.{args.ext}")
