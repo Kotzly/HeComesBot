@@ -83,7 +83,8 @@ if __name__ == "__main__":
 
     n_videos = args.n_videos if args.seed is None else 1
 
-    start_i = max([int(x.split("-")[1].split(".")[0]) for x in os.listdir("videos")]) + 1
+    videofiles = os.listdir("videos")
+    start_i = max([int(x.split("-")[1].split(".")[0]) for x in videofiles]) + 1 if videofiles else 1
 
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
@@ -104,6 +105,7 @@ if __name__ == "__main__":
         with mp.Pool(args.n_process) as pool:
             pool.starmap(worker_fn, worker_args)
         
-        bitrate_arg = "" if args.bitrate is None else f"-b {args.bitrate}"
+
+        bitrate_arg = "" if args.bitrate is None else f"-b {args.bitrate}k"
 
         os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%05d.png {bitrate_arg} videos/video-{i+start_i}.{args.ext}")
