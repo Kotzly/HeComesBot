@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     n_videos = args.n_videos if args.seed is None else 1
 
-    start_i = max([int(x.split("-")[1].split(".")[0]) for x in os.listdir("videos")])
+    start_i = max([int(x.split("-")[1].split(".")[0]) for x in os.listdir("videos")]) + 1
 
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
