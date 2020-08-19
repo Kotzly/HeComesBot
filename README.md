@@ -59,6 +59,8 @@ Use `python video.py [options]` for configurations. The options are:
 * **-d** - Duration of the video.
 * **-S** - Seed to use. If set, only one video is generated.
 * **-e** - Extension of the video file. Use `video.py -h` for possible extensions.
+* **-p** - Number of parallel processes.
+* **-b** - Constant bitrate.
 
 # Advanced configuration
 
