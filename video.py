@@ -106,6 +106,6 @@ if __name__ == "__main__":
             pool.starmap(worker_fn, worker_args)
         
 
-        bitrate_arg = "" if args.bitrate is None else f"-b {args.bitrate}k"
+        bitrate_arg = "" if args.bitrate is None else f"-b {args.bitrate}"
 
         os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%05d.png {bitrate_arg} videos/video-{i+start_i}.{args.ext}")
