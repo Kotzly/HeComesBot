@@ -33,6 +33,8 @@ Now you are good to go!
 
 # Usage
 
+## Image
+
 You can run `python societybot.py` for the default configuration.
 Use `python societybot.py [options]` for configurations. The options are:
 * **-s** - Seed for generating images and texts.
@@ -43,6 +45,22 @@ Use `python societybot.py [options]` for configurations. The options are:
 * **-h** - Show help.
 
 The defaults options are limited, for full control use the `-D` flag and change `config.json` and `personality.json` files.
+
+## Video
+
+Script `video.py` can be used to generate videos using the same technique as the images. This script needs [FFmpeg](https://www.ffmpeg.org/) installed (and accessible in PATH).
+First **Set the environment variable `FFMPEG_BIN` with the `bin` folder path of `FFmpeg`.**
+Use `python video.py [options]` for configurations. The options are:
+* **-n** - Number of videos to create.
+* **-f** - FPS.
+* **-H** - Height of the video.
+* **-W** - Width of the video.
+* **-s** - Alpha step. Bigger alphas mean bigger difference in successive frames of the video. Defaults to 0.003.
+* **-d** - Duration of the video.
+* **-S** - Seed to use. If set, only one video is generated.
+* **-e** - Extension of the video file. Use `video.py -h` for possible extensions.
+* **-p** - Number of parallel processes.
+* **-b** - Constant bitrate.
 
 # Advanced configuration
 
