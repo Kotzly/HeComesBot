@@ -1,5 +1,5 @@
 import os
-
+import sys
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 from abc import ABC, abstractmethod
@@ -14,8 +14,40 @@ from keras.layers import Layer, Input
 from keras import Model
 import tensorflow as tf
 import tensorflow.keras.backend as K
+from tensorflow.keras import Initializer
 
 DEFAULT_DTYPE = tf.keras.backend.floatx()
+
+
+class RadiusInitializer(Initializer):
+
+    def __init__(self, seed=None):
+        self.seed = seed
+        super().__init__()
+
+    def __call__(self, shape, dtype=None):
+        seed = self.seed or np.random.randint(0, sys.maxsize)
+        return 1 - tf.random.uniform(shape, 0, 1, dtype=dtype, seed=seed) ** 2
+
+    def get_config(self):  # To support serialization
+        return {}
+
+
+class CentralizedPointInitializer(Initializer):
+        
+    def __init__(self, seed=None):
+        self.seed = seed
+        super().__init__()
+
+    def __call__(self, shape, dtype=None):
+        seed = self.seed or np.random.randint(0, sys.maxsize)
+        return (
+            1 - tf.random.uniform(shape, 0, 1, dtype=dtype, seed=seed) ** 2
+        ) * 4 - 2
+
+    def get_config(self):  # To support serialization
+        return {}
+
 
 class ClassPropertyDescriptor(object):
 
@@ -40,6 +72,7 @@ class ClassPropertyDescriptor(object):
         self.fset = func
         return self
 
+
 def classproperty(func):
     if not isinstance(func, (classmethod, staticmethod)):
         func = classmethod(func)
@@ -47,20 +80,26 @@ def classproperty(func):
     return ClassPropertyDescriptor(func)
 
 
-def get_initializer(name, seed=42):
+def get_initializer(name, args=None, seed=42):
     return dict(
-        PositiveBounded=tf.keras.initializers.RandomUniform(0, 1, seed=seed),
-        Bounded=tf.keras.initializers.RandomUniform(-1, 1, seed=seed),
-        Normal=tf.keras.initializers.RandomNormal(0, 1, seed=seed),
-        PositiveNormal=tf.keras.initializers.TruncatedNormal(0, 0.5, seed=seed),
+        PositiveBounded=tf.keras.initializers.RandomUniform(
+            *(args or (0, 1)), seed=seed
+        ),
+        Bounded=tf.keras.initializers.RandomUniform(*(args or (-1, 1)), seed=seed),
+        Normal=tf.keras.initializers.RandomNormal(*(args or (0, 1)), seed=seed),
+        PositiveNormal=tf.keras.initializers.TruncatedNormal(
+            *(args or (0, 0.5)), seed=seed
+        ),
+        Radius=RadiusInitializer(seed=seed),
+        CentralizedPoint=CentralizedPointInitializer(seed=seed),
     )[name]
 
 
 def linear_mesh(width=None, height=None, channels=None, batch_dim=True):
-    y = tf.linspace(-1.0, 1.0, height)
     x = tf.linspace(-1.0, 1.0, width)
-    x, y = tf.cast(x, DEFAULT_DTYPE), tf.cast(x, DEFAULT_DTYPE)
-    x, y = tf.meshgrid(x, y)
+    y = tf.linspace(-1.0, 1.0, height)
+    x, y = tf.cast(x, DEFAULT_DTYPE), tf.cast(y, DEFAULT_DTYPE)
+    x, y = tf.meshgrid(y, x)
     channels = channels or 1
     x = tf.expand_dims(x, -1)
     y = tf.expand_dims(y, -1)
@@ -81,64 +120,88 @@ class BaseLayer(Layer):
     @classproperty
     def n_inputs(cls):
         return len(cls.input_shapes)
-    
 
     def create_inputs(self):
         return [Input(shape=shape) for shape in self.input_shapes]
 
 
-# Create a keras model that takes no inputs and outputs a constant tensor with values [1, 2, 3]
-class Constant(BaseLayer):
-    def __init__(self, shape=None, initializer=None, seed=42):
-        super().__init__()
-        self.shape = shape or ()
-        initializer = initializer or get_initializer("PositiveBounded")
-        self.value = self.add_weight(
-            name="value", shape=self.shape, initializer=initializer
-        )
-
-    def call(self, inputs=None):
-        return self.value
-
-
 class ConstantColor(BaseLayer):
-    input_shapes = ((None,),)
+    input_shapes = ()
 
     def __init__(self, width, height, initializer=None, seed=42):
         super().__init__(width, height)
         initializer = initializer or get_initializer("PositiveBounded")
         self.value = self.add_weight(
-            name="value", shape=(1, self.width, self.height, 3), initializer=initializer
+            name="value", shape=(1, 1, 1, 3), initializer=initializer
         )
 
-    def call(self, inputs=None):
-        return self.value
+    def call(self, *inputs):
+        return tf.tile(self.value, [1, self.width, self.height, 1])
+
+class Constant(BaseLayer):
+    input_shapes = ()
+
+    def __init__(self, width, height, initializer=None, seed=42):
+        super().__init__(width, height)
+        initializer = initializer or get_initializer("PositiveBounded")
+        self.value = self.add_weight(
+            name="value", shape=(1, 1, 1, 1), initializer=initializer
+        )
+
+    def call(self, *inputs):
+        return tf.tile(self.value, [1, self.width, self.height, 3])
 
 
 class Cone(BaseLayer):
 
-    input_shapes = ((2,), (2,))
+    input_shapes = ()
 
-    def call(self, center, radii):
+    def __init__(self, width, height, initializer=None, seed=42):
+        super().__init__(width, height)
+        initializer = initializer or (
+            get_initializer("CentralizedPoint", seed=seed),
+            get_initializer("Radius", seed=seed),
+        )
+        self.center = self.add_weight(
+            name="center", shape=(2,), initializer=initializer[0]
+        )
+        self.radius = self.add_weight(
+            name="radius", shape=(2,), initializer=initializer[1]
+        )
+
+    def call(self, *inputs):
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
 
         ellipsoid = K.sqrt(
-            ((x - center[..., 0]) / radii[..., 0]) ** 2
-            + ((y - center[..., 0]) / radii[..., 1]) ** 2
+            ((x - self.center[0]) / self.radius[0]) ** 2
+            + ((y - self.center[1]) / self.radius[1]) ** 2
         )
         return ellipsoid
 
 
 class Ellipse(BaseLayer):
 
-    input_shapes = ((2,), (2,))
+    input_shapes = ()
 
-    def call(self, center, radii):
+    def __init__(self, width, height, initializer=None, seed=42):
+        super().__init__(width, height)
+        initializer = initializer or (
+            get_initializer("CentralizedPoint", seed=seed),
+            get_initializer("Radius", seed=seed),
+        )
+        self.center = self.add_weight(
+            name="center", shape=(2,), initializer=initializer[0]
+        )
+        self.radius = self.add_weight(
+            name="radius", shape=(2,), initializer=initializer[1]
+        )
+
+    def call(self, *inputs):
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
 
         ellipsoid = K.sqrt(
-            ((x - center[..., 0]) / radii[..., 0]) ** 2
-            + ((y - center[..., 1]) / radii[..., 1]) ** 2
+            ((x - self.center[0]) / self.radius[0]) ** 2
+            + ((y - self.center[1]) / self.radius[1]) ** 2
         )
         ellipsoid = K.cast(ellipsoid >= 1, x.dtype)
         return ellipsoid
@@ -146,16 +209,27 @@ class Ellipse(BaseLayer):
 
 class Circle(BaseLayer):
 
-    input_shapes = (
-        (2,),
-        (1,),
-    )
+    input_shapes = ()
 
-    def call(self, center, radius):
+    def __init__(self, width, height, initializer=None, seed=42):
+        super().__init__(width, height)
+        initializer = initializer or (
+            get_initializer("CentralizedPoint"),
+            get_initializer("Radius"),
+        )
+        self.center = self.add_weight(
+            name="center", shape=(2,), initializer=initializer[0]
+        )
+        self.radius = self.add_weight(
+            name="radius", shape=(1,), initializer=initializer[1]
+        )
+
+    def call(self, *inputs):
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
 
         ellipsoid = K.sqrt(
-            ((x - center[..., 0]) / radius) ** 2 + ((y - center[..., 1]) / radius) ** 2
+            ((x - self.center[0]) / self.radius) ** 2
+            + ((y - self.center[1]) / self.radius) ** 2
         )
         ellipsoid = K.cast(ellipsoid >= 1, x.dtype)
         return ellipsoid
@@ -164,8 +238,8 @@ class Circle(BaseLayer):
 class SafeDivide(BaseLayer):
 
     input_shapes = (
-        (None,),
-        (None,),
+        (None, None, None),
+        (None, None, None),
     )
 
     def __init__(self, width, height, eps=1e-3):
@@ -180,8 +254,8 @@ class SafeDivide(BaseLayer):
 class Multiply(BaseLayer):
 
     input_shapes = (
-        (None,),
-        (None,),
+        (None, None, None),
+        (None, None, None),
     )
 
     def call(self, x, y):
@@ -190,42 +264,56 @@ class Multiply(BaseLayer):
 
 class Gradient(BaseLayer):
 
-    input_shapes = (
-        (1, 1, 1),
-        (1, 1, 1),
-    )
+    input_shapes = ()
 
-    def call(self, a, b):
+    def __init__(self, width=None, height=None):
+        super().__init__(width, height)
+        self.grad = self.add_weight(
+            name="grad", shape=(2, 1, 1, 1, 1), initializer=get_initializer("Normal")
+        )
+
+    def call(self, *inputs):
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
-        return a * x + b * y
+        return self.grad[0] * x + self.grad[1] * y
 
 
 class RGBGradient(BaseLayer):
 
-    input_shapes = (
-        (1, 1, 3),
-        (1, 1, 3),
-    )
+    input_shapes = ()
 
-    def call(self, a, b):
+    def __init__(self, width=None, height=None):
+        super().__init__(width, height)
+        self.grad = self.add_weight(
+            name="grad", shape=(2, 1, 1, 1, 3), initializer=get_initializer("Normal")
+        )
+
+    def call(self, *inputs):
 
         x, y = linear_mesh(self.width, self.height, channels=3, batch_dim=True)
-        return a * x + b * y
+        return self.grad[0] * x + self.grad[1] * y
 
 
 class Color(BaseLayer):
-    input_shapes = ((1, 1, 3),)
+    input_shapes = ()
 
-    def call(self, color):
-        return color
+    def __init__(self, width, height):
+        super().__init__(width, height)
+        self.color = self.add_weight(
+            name="color",
+            shape=(1, 1, 1, 3),
+            initializer=get_initializer("PositiveBounded"),
+        )
+
+    def call(self, *inputs):
+        return tf.tile(self.color, [1, self.width, self.height, 1])
 
 
 class Noise(BaseLayer):
 
-    input_shapes = ((None,),)
+    input_shapes = ()
 
     def call(self, *inputs):
-        return tf.random.uniform((1, 100, 100, 3), 0, 1)
+        return tf.random.uniform((1, self.width, self.height, 3), 0, 1)
 
 
 class Sum(BaseLayer):
@@ -303,6 +391,10 @@ class StaticConvolve(BaseLayer):
         self.padding = padding or "SAME"
 
     def call(self, img):
+
+        if img.shape[-1] == 1:
+            img = tf.tile(img, [1] * (img.ndim - 1) + [3])
+
         return tf.nn.depthwise_conv2d(
             img, self.kernel, strides=self.stride, padding="SAME"
         )
@@ -356,9 +448,18 @@ class Sharpen5x5Convolve(StaticConvolve):
         super().__init__(width, height, sharpen_kernel_5)
 
 
+class LeafLayer(BaseLayer):
+    def __init__(self, width, height):
+        super().__init__(width, height)
+
+    def call(self):
+        return Input(shape=(self.width, self.height, 3))
+
+
 BUILD_CLASSES = {
     # "Constant": Constant,
-    # "ConstantColor": ConstantColor,
+    "ConstantColor": ConstantColor,
+    "Constant": Constant,
     "Cone": Cone,
     "Ellipse": Ellipse,
     "Circle": Circle,
@@ -370,14 +471,16 @@ BUILD_CLASSES = {
     "Noise": Noise,
     "Sum": Sum,
     "Sub": Sub,
-    "StaticConvolve": StaticConvolve,
+    # "StaticConvolve": StaticConvolve,
     # "Convolve": Convolve,
     "Gauss3x3Convolve": Gauss3x3Convolve,
     "Gauss5x5Convolve": Gauss5x5Convolve,
     "Sharpen3x3Convolve": Sharpen3x3Convolve,
     "Sharpen5x5Convolve": Sharpen5x5Convolve,
+    # "Input": Input,
 }
-
+LEAF_CLASSES = ["ConstantColor", "Noise", "Color", "Gradient", "RGBGradient"]
+    
 if __name__ == "__main__":
 
     for name, cls in BUILD_CLASSES.items():
@@ -386,8 +489,6 @@ if __name__ == "__main__":
         inputs = list()
         for shape in cls.input_shapes:
             inputs.append(
-                tf.random.uniform(
-                    [1] + [(s if s is not None else 64) for s in shape]
-                )
+                tf.random.uniform([1] + [(s if s is not None else 64) for s in shape])
             )
         print(layer(*inputs).shape)
