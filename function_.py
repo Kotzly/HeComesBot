@@ -117,16 +117,17 @@ class BaseLayer(Layer):
         self.width = width
         self.height = height
 
-    @classproperty
-    def n_inputs(cls):
-        return len(cls.input_shapes)
 
-    def create_inputs(self):
-        return [Input(shape=shape) for shape in self.input_shapes]
+class BaseLeafLayer(BaseLayer):
+    def __init__(self, width=None, height=None):
+        super().__init__(width, height)
+        
 
 
-class ConstantColor(BaseLayer):
-    input_shapes = ()
+
+class ConstantColor(BaseLeafLayer):
+    n_inputs = 0
+    n_args = 3
 
     def __init__(self, width, height, initializer=None, seed=42):
         super().__init__(width, height)
@@ -135,15 +136,19 @@ class ConstantColor(BaseLayer):
             name="value", shape=(1, 1, 1, 3), initializer=initializer
         )
 
+    def shape_params(self, param):
+        batch_size, _, _, n_channels = param.shape
+        return tf.reshape(param, (1, 1, 1, 3))
+
     def call(self, *inputs):
         return tf.tile(self.value, [1, self.width, self.height, 1])
 
 class Constant(BaseLayer):
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width, height, initializer=None, seed=42):
         super().__init__(width, height)
-        initializer = initializer or get_initializer("PositiveBounded")
+        initializer = initializer or get_initializer("PositiveBounded", seed=seed)
         self.value = self.add_weight(
             name="value", shape=(1, 1, 1, 1), initializer=initializer
         )
@@ -154,7 +159,7 @@ class Constant(BaseLayer):
 
 class Cone(BaseLayer):
 
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width, height, initializer=None, seed=42):
         super().__init__(width, height)
@@ -181,7 +186,7 @@ class Cone(BaseLayer):
 
 class Ellipse(BaseLayer):
 
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width, height, initializer=None, seed=42):
         super().__init__(width, height)
@@ -209,7 +214,7 @@ class Ellipse(BaseLayer):
 
 class Circle(BaseLayer):
 
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width, height, initializer=None, seed=42):
         super().__init__(width, height)
@@ -237,10 +242,8 @@ class Circle(BaseLayer):
 
 class SafeDivide(BaseLayer):
 
-    input_shapes = (
-        (None, None, None),
-        (None, None, None),
-    )
+    n_inputs = 2
+
 
     def __init__(self, width, height, eps=1e-3):
         super().__init__(width, height)
@@ -253,10 +256,7 @@ class SafeDivide(BaseLayer):
 
 class Multiply(BaseLayer):
 
-    input_shapes = (
-        (None, None, None),
-        (None, None, None),
-    )
+    n_inputs = 2
 
     def call(self, x, y):
         return x * y
@@ -264,7 +264,7 @@ class Multiply(BaseLayer):
 
 class Gradient(BaseLayer):
 
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width=None, height=None):
         super().__init__(width, height)
@@ -279,7 +279,7 @@ class Gradient(BaseLayer):
 
 class RGBGradient(BaseLayer):
 
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width=None, height=None):
         super().__init__(width, height)
@@ -294,7 +294,7 @@ class RGBGradient(BaseLayer):
 
 
 class Color(BaseLayer):
-    input_shapes = ()
+    n_inputs = 0
 
     def __init__(self, width, height):
         super().__init__(width, height)
@@ -310,7 +310,7 @@ class Color(BaseLayer):
 
 class Noise(BaseLayer):
 
-    input_shapes = ()
+    n_inputs = 0
 
     def call(self, *inputs):
         return tf.random.uniform((1, self.width, self.height, 3), 0, 1)
@@ -318,10 +318,8 @@ class Noise(BaseLayer):
 
 class Sum(BaseLayer):
 
-    input_shapes = (
-        (None, None, None),
-        (None, None, None),
-    )
+    n_inputs = 2
+
 
     def call(self, a, b):
         return a + b
@@ -329,10 +327,8 @@ class Sum(BaseLayer):
 
 class Sub(BaseLayer):
 
-    input_shapes = (
-        (None, None, None),
-        (None, None, None),
-    )
+    n_inputs = 2
+
 
     def call(self, a, b):
         return a - b
@@ -380,7 +376,7 @@ sharpen_kernel_5 = tf.tile(tf.reshape(sharpen_kernel_5, (5, 5, 1, 1)), [1, 1, 3,
 
 class StaticConvolve(BaseLayer):
 
-    input_shapes = ((None, None, 3),)
+    n_inputs = 1
 
     def __init__(
         self, width, height, kernel=gaussian_kernel_3, stride=None, padding=None
@@ -400,25 +396,11 @@ class StaticConvolve(BaseLayer):
         )
 
 
-# class Convolve(BaseLayer):
-
-#     input_shapes = (
-#         (None, None, 3),
-#         (None, None, 1),
-#     )
-
-#     def __init__(self, width, height, stride=None, padding=None):
-#         super().__init__(width, height)
-#         self.stride = stride or (1, 1, 1, 1)
-#         self.padding = padding or "SAME"
-
-#     def call(self, img, kernel):
-#         return tf.nn.depthwise_conv2d(img, kernel, strides=self.stride, padding="SAME")
 
 
 class Gauss3x3Convolve(StaticConvolve):
 
-    input_shapes = ((None, None, 3),)
+    n_inputs = 1
 
     def __init__(self, width, height):
         super().__init__(width, height, gaussian_kernel_3)
@@ -426,7 +408,7 @@ class Gauss3x3Convolve(StaticConvolve):
 
 class Gauss5x5Convolve(StaticConvolve):
 
-    input_shapes = ((None, None, 3),)
+    n_inputs = 1
 
     def __init__(self, width, height):
         super().__init__(width, height, gaussian_kernel_5)
@@ -434,7 +416,7 @@ class Gauss5x5Convolve(StaticConvolve):
 
 class Sharpen3x3Convolve(StaticConvolve):
 
-    input_shapes = ((None, None, 3),)
+    n_inputs = 1
 
     def __init__(self, width, height):
         super().__init__(width, height, sharpen_kernel_3)
@@ -442,7 +424,7 @@ class Sharpen3x3Convolve(StaticConvolve):
 
 class Sharpen5x5Convolve(StaticConvolve):
 
-    input_shapes = ((None, None, 3),)
+    n_inputs = 1
 
     def __init__(self, width, height):
         super().__init__(width, height, sharpen_kernel_5)
@@ -481,14 +463,3 @@ BUILD_CLASSES = {
 }
 LEAF_CLASSES = ["ConstantColor", "Noise", "Color", "Gradient", "RGBGradient"]
     
-if __name__ == "__main__":
-
-    for name, cls in BUILD_CLASSES.items():
-        print(f"Testing {name}")
-        layer = cls(256, 256)
-        inputs = list()
-        for shape in cls.input_shapes:
-            inputs.append(
-                tf.random.uniform([1] + [(s if s is not None else 64) for s in shape])
-            )
-        print(layer(*inputs).shape)

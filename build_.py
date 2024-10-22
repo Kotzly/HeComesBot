@@ -9,33 +9,7 @@ from tensorflow.keras.layers import Input
 from tensorflow.keras.models import Model
 import os
 
-def random_sequence_length(max_length, min_length):
-    if max_length is None and min_length is not None:
-        sequence_length = min_length
-    elif max_length is not None and min_length is not None:
-        sequence_length = max_length
-    elif max_length is not None and min_length is not None:
-        sequence_length = np.random.randint(min_length, max_length + 1)
-    else:
-        sequence_length = 1
-    return sequence_length
 
-def make_text(quotes_path, max_length=None, min_length=None, state_size=2, seed=42):
-    with open(quotes_path, encoding='utf8') as quote_file:
-       text = quote_file.read()
-
-    text_model = markovify.NewlineText(text, state_size=state_size)
-    sequence_length = random_sequence_length(max_length, min_length)
-
-    random.seed(seed)
-    return text_model.make_short_sentence(sequence_length)
-
-
-def log_tree_to_file(func, depth, log_filepath="tree.txt"):
-    if log_filepath is not None:
-        mode = "a" if isfile(log_filepath) else "w"
-        with open(log_filepath, mode) as log_file:
-            log_file.write("|\t"*depth + func.__name__ + "\n")
 
 def get_random_function(depth=0, min_depth=5, max_depth=15, weights=None):
 
