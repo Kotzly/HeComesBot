@@ -1,7 +1,7 @@
 import os
 import sys
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
-
+import math
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Dict, Any, Optional, Union
 from numpy import ndarray
@@ -49,36 +49,6 @@ class CentralizedPointInitializer(Initializer):
         return {}
 
 
-class ClassPropertyDescriptor(object):
-
-    def __init__(self, fget, fset=None):
-        self.fget = fget
-        self.fset = fset
-
-    def __get__(self, obj, klass=None):
-        if klass is None:
-            klass = type(obj)
-        return self.fget.__get__(obj, klass)()
-
-    def __set__(self, obj, value):
-        if not self.fset:
-            raise AttributeError("can't set attribute")
-        type_ = type(obj)
-        return self.fset.__get__(obj, type_)(value)
-
-    def setter(self, func):
-        if not isinstance(func, (classmethod, staticmethod)):
-            func = classmethod(func)
-        self.fset = func
-        return self
-
-
-def classproperty(func):
-    if not isinstance(func, (classmethod, staticmethod)):
-        func = classmethod(func)
-
-    return ClassPropertyDescriptor(func)
-
 
 def get_initializer(name, args=None, seed=42):
     return dict(
@@ -95,9 +65,9 @@ def get_initializer(name, args=None, seed=42):
     )[name]
 
 
-def linear_mesh(width=None, height=None, channels=None, batch_dim=True):
-    x = tf.linspace(-1.0, 1.0, width)
-    y = tf.linspace(-1.0, 1.0, height)
+def linear_mesh(width=None, height=None, channels=None, batch_dim=True, start=-1, end=1):
+    x = tf.linspace(start, end, width)
+    y = tf.linspace(start, end, height)
     x, y = tf.cast(x, DEFAULT_DTYPE), tf.cast(y, DEFAULT_DTYPE)
     x, y = tf.meshgrid(y, x)
     channels = channels or 1
@@ -119,131 +89,115 @@ class BaseLayer(Layer):
 
 
 class BaseLeafLayer(BaseLayer):
+    n_inputs = 0
     def __init__(self, width=None, height=None):
         super().__init__(width, height)
         
 
-
-
-class ConstantColor(BaseLeafLayer):
-    n_inputs = 0
-    n_args = 3
-
-    def __init__(self, width, height, initializer=None, seed=42):
+class Operation(BaseLayer):
+    def __init__(self, width=None, height=None):
         super().__init__(width, height)
-        initializer = initializer or get_initializer("PositiveBounded")
-        self.value = self.add_weight(
-            name="value", shape=(1, 1, 1, 3), initializer=initializer
-        )
-
-    def shape_params(self, param):
-        batch_size, _, _, n_channels = param.shape
-        return tf.reshape(param, (1, 1, 1, 3))
-
-    def call(self, *inputs):
-        return tf.tile(self.value, [1, self.width, self.height, 1])
-
-class Constant(BaseLayer):
-    n_inputs = 0
-
-    def __init__(self, width, height, initializer=None, seed=42):
-        super().__init__(width, height)
-        initializer = initializer or get_initializer("PositiveBounded", seed=seed)
-        self.value = self.add_weight(
-            name="value", shape=(1, 1, 1, 1), initializer=initializer
-        )
-
-    def call(self, *inputs):
-        return tf.tile(self.value, [1, self.width, self.height, 3])
 
 
-class Cone(BaseLayer):
+class Color(BaseLeafLayer):
+    shapes =[
+        (None, 1)
+    ]
+    def call(self, color):
+        # shape is (1, 1, 1, 1) (batch, width, height, channels=1)
+        color = tf.reshape(color, (-1, 1, 1, 1))
+        shape = tf.constant([1,  self.width, self.height, 3], tf.int32)
+        return tf.tile(color, shape)
 
-    n_inputs = 0
+class RGBColor(BaseLeafLayer):
+    shapes =[
+        (None, 3)
+    ]
 
-    def __init__(self, width, height, initializer=None, seed=42):
-        super().__init__(width, height)
-        initializer = initializer or (
-            get_initializer("CentralizedPoint", seed=seed),
-            get_initializer("Radius", seed=seed),
-        )
-        self.center = self.add_weight(
-            name="center", shape=(2,), initializer=initializer[0]
-        )
-        self.radius = self.add_weight(
-            name="radius", shape=(2,), initializer=initializer[1]
-        )
+    def call(self, color):
+        # shape is (1, 1, 1, 3) (batch, width, height, channels=3)
+        color = tf.reshape(color, (-1, 1, 1, 3))
+        shape = tf.constant([1,  self.width, self.height, 1], tf.int32)
+        return tf.tile(color, shape)
 
-    def call(self, *inputs):
+
+class Cone(BaseLeafLayer):
+    shapes =[
+        (None, 2), # position
+        (None, 1),  # radius
+    ]
+
+    def call(self, center, radius):
+        
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
 
+        radius = tf.abs(radius)
+
+        centerx = tf.reshape(center[:, 0], (-1, 1, 1, 1))
+        centery = tf.reshape(center[:, 1], (-1, 1, 1, 1))
+        radius = tf.reshape(radius, (-1, 1, 1, 1))
+
         ellipsoid = K.sqrt(
-            ((x - self.center[0]) / self.radius[0]) ** 2
-            + ((y - self.center[1]) / self.radius[1]) ** 2
+            ((x - centerx) / radius) ** 2
+            + ((y - centery) / radius) ** 2
         )
         return ellipsoid
 
 
-class Ellipse(BaseLayer):
-
-    n_inputs = 0
-
-    def __init__(self, width, height, initializer=None, seed=42):
-        super().__init__(width, height)
-        initializer = initializer or (
-            get_initializer("CentralizedPoint", seed=seed),
-            get_initializer("Radius", seed=seed),
-        )
-        self.center = self.add_weight(
-            name="center", shape=(2,), initializer=initializer[0]
-        )
-        self.radius = self.add_weight(
-            name="radius", shape=(2,), initializer=initializer[1]
-        )
-
-    def call(self, *inputs):
+class Ellipse(BaseLeafLayer):
+    shapes =[
+        (None, 2), # position
+        (None, 2),  # radius
+    ]
+    def call(self, center, radius):
+        
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
 
+        radius = tf.abs(radius)
+
+        centerx = tf.reshape(center[:, 0], (-1, 1, 1, 1))
+        centery = tf.reshape(center[:, 1], (-1, 1, 1, 1))
+
+        radiusx = tf.reshape(radius[:, 0], (-1, 1, 1, 1))
+        radiusy = tf.reshape(radius[:, 1], (-1, 1, 1, 1))
+
         ellipsoid = K.sqrt(
-            ((x - self.center[0]) / self.radius[0]) ** 2
-            + ((y - self.center[1]) / self.radius[1]) ** 2
+            ((x - centerx) / radiusx) ** 2
+            + ((y - centery) / radiusy) ** 2
         )
         ellipsoid = K.cast(ellipsoid >= 1, x.dtype)
         return ellipsoid
 
 
-class Circle(BaseLayer):
+class Circle(BaseLeafLayer):
+    shapes =[
+        (None, 2), # position
+        (None, 1),  # radius
+    ]
 
-    n_inputs = 0
 
-    def __init__(self, width, height, initializer=None, seed=42):
-        super().__init__(width, height)
-        initializer = initializer or (
-            get_initializer("CentralizedPoint"),
-            get_initializer("Radius"),
-        )
-        self.center = self.add_weight(
-            name="center", shape=(2,), initializer=initializer[0]
-        )
-        self.radius = self.add_weight(
-            name="radius", shape=(1,), initializer=initializer[1]
-        )
-
-    def call(self, *inputs):
+    def call(self, center, radius):
         x, y = linear_mesh(self.width, self.height, batch_dim=True)
 
+        radius = tf.abs(radius)
+
+        centerx = tf.reshape(center[:, 0], (-1, 1, 1, 1))
+        centery = tf.reshape(center[:, 1], (-1, 1, 1, 1))
+        radius = tf.reshape(radius, (-1, 1, 1, 1))
         ellipsoid = K.sqrt(
-            ((x - self.center[0]) / self.radius) ** 2
-            + ((y - self.center[1]) / self.radius) ** 2
+            ((x - centerx) / radius) ** 2
+            + ((y - centery) / radius) ** 2
         )
         ellipsoid = K.cast(ellipsoid >= 1, x.dtype)
         return ellipsoid
 
 
-class SafeDivide(BaseLayer):
-
+class SafeDivide(Operation):
+    shapes = [
+        (None, None, None, 3),
+        (None, None, None, 3)
+    ]
     n_inputs = 2
-
 
     def __init__(self, width, height, eps=1e-3):
         super().__init__(width, height)
@@ -254,85 +208,131 @@ class SafeDivide(BaseLayer):
         return tf.clip_by_value(x / y, -1 / self.eps, 1 / self.eps)
 
 
-class Multiply(BaseLayer):
-
+class Multiply(Operation):
+    shapes = [
+        (None, None, None, 3),
+        (None, None, None, 3)
+    ]
     n_inputs = 2
 
     def call(self, x, y):
         return x * y
 
 
-class Gradient(BaseLayer):
+class Gradient(BaseLeafLayer):
 
-    n_inputs = 0
+    shapes =[
+        (None, 1), # direction
+    ]
 
-    def __init__(self, width=None, height=None):
-        super().__init__(width, height)
-        self.grad = self.add_weight(
-            name="grad", shape=(2, 1, 1, 1, 1), initializer=get_initializer("Normal")
-        )
+    def call(self, direction):
 
-    def call(self, *inputs):
-        x, y = linear_mesh(self.width, self.height, batch_dim=True)
-        return self.grad[0] * x + self.grad[1] * y
-
-
-class RGBGradient(BaseLayer):
-
-    n_inputs = 0
-
-    def __init__(self, width=None, height=None):
-        super().__init__(width, height)
-        self.grad = self.add_weight(
-            name="grad", shape=(2, 1, 1, 1, 3), initializer=get_initializer("Normal")
-        )
-
-    def call(self, *inputs):
-
-        x, y = linear_mesh(self.width, self.height, channels=3, batch_dim=True)
-        return self.grad[0] * x + self.grad[1] * y
+        v = 1 / math.sqrt(2)
+        
+        direction_x = tf.reshape(tf.sin(direction), (-1, 1, 1, 1))
+        direction_y = tf.reshape(tf.cos(direction), (-1, 1, 1, 1))
+                
+        x, y = linear_mesh(self.width, self.height, channels=1, batch_dim=True, start=-v, end=v)
+        img = (x * direction_x) + (y * direction_y)
+        img = (img + 1) / 2
+        return img
+        
 
 
-class Color(BaseLayer):
-    n_inputs = 0
+class RGBGradient(BaseLeafLayer):
+    shapes =[
+        (None, 1), # directions
+        (None, 3), # color
+    ]
 
-    def __init__(self, width, height):
-        super().__init__(width, height)
-        self.color = self.add_weight(
-            name="color",
-            shape=(1, 1, 1, 3),
-            initializer=get_initializer("PositiveBounded"),
-        )
+    def call(self, direction, color):
 
-    def call(self, *inputs):
-        return tf.tile(self.color, [1, self.width, self.height, 1])
+        v = 1 / math.sqrt(2)
+        
+        direction_x = tf.reshape(tf.sin(direction), (-1, 1, 1, 1))
+        direction_y = tf.reshape(tf.cos(direction), (-1, 1, 1, 1))
+                
+        color = tf.reshape(color, (-1, 1, 1, 3))
+        
+        x, y = linear_mesh(self.width, self.height, channels=3, batch_dim=True, start=-v, end=v)
+        img = (x * direction_x) + (y * direction_y)
+        img = (img + 1) / 2
+        img = img * color
+        return img
 
 
-class Noise(BaseLayer):
+class Noise(BaseLeafLayer):
+    n_inputs = 1
+    shapes = [
+        (None, 1)
+    ]
 
-    n_inputs = 0
-
-    def call(self, *inputs):
-        return tf.random.uniform((1, self.width, self.height, 3), 0, 1)
+    def call(self, snr):
+        snr = tf.reshape(snr, (-1, 1, 1, 1))
+        snr = tf.abs(snr)
+        return tf.random.uniform((1, self.width, self.height, 3), 0, 1) * snr
 
 
 class Sum(BaseLayer):
-
+    shapes = [
+        (None, None, None, 3),
+        (None, None, None, 3)
+    ]
     n_inputs = 2
-
 
     def call(self, a, b):
         return a + b
 
 
 class Sub(BaseLayer):
-
+    shapes = [
+        (None, None, None, 3),
+        (None, None, None, 3)
+    ]
     n_inputs = 2
-
 
     def call(self, a, b):
         return a - b
 
+
+class Cosine(Operation):
+    shapes = [
+        None
+    ]
+    n_inputs = 1
+
+    def call(self, img):
+        return tf.cos(img)
+
+
+class Sigmoid(Operation):
+    shapes = [
+        None
+    ]
+    n_inputs = 1
+
+    def call(self, img):
+        return tf.sigmoid(img)
+
+
+class Tanh(Operation):
+    shapes = [
+        None
+    ]
+    n_inputs = 1
+
+    def call(self, img):
+        return tf.tanh(img)
+
+class Saddle(Operation):
+    shapes = [
+        None,
+        None
+    ]
+    n_inputs = 2
+
+    def call(self, img1, img2):
+        return img1 ** 2 - img2 ** 2
 
 gaussian_kernel_5 = (
     tf.constant(
@@ -373,75 +373,80 @@ gaussian_kernel_5 = tf.tile(tf.reshape(gaussian_kernel_5, (5, 5, 1, 1)), [1, 1, 
 sharpen_kernel_3 = tf.tile(tf.reshape(sharpen_kernel_3, (3, 3, 1, 1)), [1, 1, 3, 1])
 sharpen_kernel_5 = tf.tile(tf.reshape(sharpen_kernel_5, (5, 5, 1, 1)), [1, 1, 3, 1])
 
+class Convolve(BaseLeafLayer):
 
-class StaticConvolve(BaseLayer):
+    n_inputs = 2
 
-    n_inputs = 1
+    shapes = [
+        None,
+        (None, None, None, 1)
+    ]
 
     def __init__(
-        self, width, height, kernel=gaussian_kernel_3, stride=None, padding=None
+        self, width, height, stride=None, padding=None
     ):
         super().__init__(width, height)
-        self.kernel = kernel
         self.stride = stride or (1, 1, 1, 1)
         self.padding = padding or "SAME"
 
-    def call(self, img):
+    def call(self, img, kernel):
 
         if img.shape[-1] == 1:
             img = tf.tile(img, [1] * (img.ndim - 1) + [3])
 
         return tf.nn.depthwise_conv2d(
-            img, self.kernel, strides=self.stride, padding="SAME"
+            img, kernel, strides=self.stride, padding=self.padding
         )
 
 
-
-
+class StaticConvolve(Convolve):
+    shapes = [
+        None,
+        (None, None, None, 1)
+    ]
+    n_inputs = 2
+    
 class Gauss3x3Convolve(StaticConvolve):
-
+    shapes = [
+        None,
+    ]
     n_inputs = 1
 
-    def __init__(self, width, height):
-        super().__init__(width, height, gaussian_kernel_3)
-
+    def call(self, img):
+        return super().call(img, gaussian_kernel_3)
 
 class Gauss5x5Convolve(StaticConvolve):
-
+    shapes = [
+        None,
+    ]
     n_inputs = 1
 
-    def __init__(self, width, height):
-        super().__init__(width, height, gaussian_kernel_5)
-
+    def call(self, img):
+        return super().call(img, gaussian_kernel_5)
 
 class Sharpen3x3Convolve(StaticConvolve):
-
+    shapes = [
+        None,
+    ]
     n_inputs = 1
 
-    def __init__(self, width, height):
-        super().__init__(width, height, sharpen_kernel_3)
+    def call(self, img):
+        return super().call(img, sharpen_kernel_3)
 
 
 class Sharpen5x5Convolve(StaticConvolve):
-
+    shapes = [
+        None,
+    ]
     n_inputs = 1
 
-    def __init__(self, width, height):
-        super().__init__(width, height, sharpen_kernel_5)
-
-
-class LeafLayer(BaseLayer):
-    def __init__(self, width, height):
-        super().__init__(width, height)
-
-    def call(self):
-        return Input(shape=(self.width, self.height, 3))
+    def call(self, img):
+        return super().call(img, sharpen_kernel_5)
 
 
 BUILD_CLASSES = {
-    # "Constant": Constant,
-    "ConstantColor": ConstantColor,
-    "Constant": Constant,
+    "Color": Color,
+    "RGBColor": RGBColor,
     "Cone": Cone,
     "Ellipse": Ellipse,
     "Circle": Circle,
@@ -453,13 +458,36 @@ BUILD_CLASSES = {
     "Noise": Noise,
     "Sum": Sum,
     "Sub": Sub,
-    # "StaticConvolve": StaticConvolve,
-    # "Convolve": Convolve,
     "Gauss3x3Convolve": Gauss3x3Convolve,
     "Gauss5x5Convolve": Gauss5x5Convolve,
     "Sharpen3x3Convolve": Sharpen3x3Convolve,
     "Sharpen5x5Convolve": Sharpen5x5Convolve,
-    # "Input": Input,
+    "Cosine": Cosine,
+    "Sigmoid": Sigmoid,
 }
 LEAF_CLASSES = ["ConstantColor", "Noise", "Color", "Gradient", "RGBGradient"]
     
+
+if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    for name, cls in BUILD_CLASSES.items():
+        print(name, "\n" * 4)
+        if len(cls.shapes) == 0:
+            print(cls().call().shape)
+        else:
+            shapes = [
+                (7, 100, 100, 3) if cls.shapes[i] is None else (7, *((x or 100) for x in cls.shapes[i][1:]))
+                for i in range(len(cls.shapes))
+            ]
+            inputs = [
+                tf.random.uniform(shape, 0, 1)
+                for shape in shapes
+            ]
+            print("\n" * 4)
+            img = cls(100, 100).call(*inputs)
+
+            plt.figure()
+            plt.imshow(img.numpy()[0])
+            plt.title(name)
+            plt.show()
+            
