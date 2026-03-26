@@ -2,6 +2,7 @@ import os
 import numpy as np
 import subprocess
 import optparse
+import multiprocessing as mp
 from numpy.random import rand
 from tqdm import tqdm
 from config import load_personality_list
@@ -30,8 +31,8 @@ def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, seed=42,
             if n_args != 0:
                 return [n_args, func, args]
             else:
-                leaf = func(*args, **kwargs)
-                return [leaf, random_delta(leaf, alpha)]
+                leaf = func(*args, **kwargs).astype(np.float32)
+                return [leaf, np.float32(random_delta(leaf, alpha))]
         except Exception as e:
             print(func.__name__, str(e))
             raise e
@@ -64,6 +65,17 @@ def build_frames(tree, steps):
     return _eval(tree)
 
 
+_worker_tree = None
+
+def _init_worker(tree):
+    global _worker_tree
+    _worker_tree = tree
+
+def _compute_chunk(steps):
+    frames = build_frames(_worker_tree, steps)
+    return np.rint(frames.clip(0.0, 1.0) * 255.0).astype(np.uint8)
+
+
 def parse_cmd_args():
     parser = optparse.OptionParser()
     parser.add_option('-n', '--n_videos', dest='n_videos', type=int, default=1, help='Number of videos. Default: 1.')
@@ -76,7 +88,8 @@ def parse_cmd_args():
     parser.add_option('-e', '--extension', dest='ext', type=str, default="webm", help='Extension. Can be webm, avi, mp4, gif, flv, ogg, mpeg. Default: webm.')
     parser.add_option('-b', '--bitrate', dest='bitrate', type=str, default="6M", help='Constant bitrate. Default: 6M.')
     parser.add_option('-C', '--codec', dest='codec', type=str, default="libopenh264", help='Video codec. Default: libopenh264.')
-    parser.add_option('-c', '--chunk_size', dest='chunk_size', type=int, default=30, help='Frames per batch. Lower values use less memory. Default: 30.')
+    parser.add_option('-c', '--chunk_size', dest='chunk_size', type=int, default=10, help='Frames per batch. Lower values use less memory. Default: 10.')
+    parser.add_option('-p', '--processes', dest='n_process', type=int, default=3, help='Number of parallel workers. Default: 3.')
     args, _ = parser.parse_args()
     return args
 
@@ -92,7 +105,8 @@ if __name__ == "__main__":
     start_i = max([int(x.split("-")[1].split(".")[0]) for x in videofiles]) + 1 if videofiles else 1
 
     n_frames = args.fps * args.duration
-    all_steps = np.arange(n_frames).reshape(-1, 1, 1, 1) / args.fps
+    all_steps = (np.arange(n_frames) / args.fps).astype(np.float32).reshape(-1, 1, 1, 1)
+    chunk_steps = [all_steps[s:s + args.chunk_size] for s in range(0, n_frames, args.chunk_size)]
 
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
@@ -112,19 +126,16 @@ if __name__ == "__main__":
             "-vcodec", args.codec,
             "-profile:v", "high",
             "-coder", "cabac",
-            "-rc_mode", "quality",
+            "-rc_mode", "bitrate",
             *bitrate_args,
             output_path
         ]
 
         print(f"Encoding {n_frames} frames to {output_path}")
-        chunks = range(0, n_frames, args.chunk_size)
-        with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
-            with tqdm(total=n_frames, unit="frame") as pbar:
-                for chunk_start in chunks:
-                    steps = all_steps[chunk_start:chunk_start + args.chunk_size]
-                    frames = build_frames(tree, steps)
-                    frames = np.rint(frames.clip(0.0, 1.0) * 255.0).astype(np.uint8)
-                    proc.stdin.write(frames.tobytes())
-                    pbar.update(len(steps))
+        with mp.Pool(args.n_process, initializer=_init_worker, initargs=(tree,)) as pool:
+            with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
+                with tqdm(total=n_frames, unit="frame") as pbar:
+                    for frames in pool.imap(_compute_chunk, chunk_steps):
+                        proc.stdin.write(frames.tobytes())
+                        pbar.update(len(frames))
         print(f"Done: {output_path}")
