@@ -1,33 +1,30 @@
 import os
-from build import *
 import numpy as np
-import sys
 import subprocess
-from config import load_personality_list
 import optparse
-from PIL import Image
-import shutil
-import time
 from numpy.random import rand
-import multiprocessing as mp
+from tqdm import tqdm
+from config import load_personality_list
+from build import get_random_function
+from functions import blur, sharpen, kaleidoscope, color_rotate, swap_phase_amplitude
 
 p = load_personality_list("personality.json")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN")
 
-if not (FFMPEG_BIN + os.pathsep) in os.environ["PATH"]:
+if FFMPEG_BIN and not (FFMPEG_BIN + os.pathsep) in os.environ["PATH"]:
     os.environ["PATH"] = (FFMPEG_BIN + os.pathsep) + os.environ["PATH"]
 
-def random_delta(tensor, alpha=5e-3):
-    random_direction = np.random.choice([1, -1]) * alpha
-    return random_direction
 
-def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, log_filepath="tree.txt", seed=42, alpha=1e-2):
-    
+def random_delta(tensor, alpha=5e-3):
+    return np.random.choice([1, -1]) * alpha
+
+
+def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, seed=42, alpha=1e-2):
     np.random.seed(seed % (2**32 - 1))
-    
+
     def _build_tree(depth=0):
         n_args, func = get_random_function(depth, p=weights, min_depth=min_depth, max_depth=max_depth)
-        args = [_build_tree(depth + 1) for i in range(n_args)]
+        args = [_build_tree(depth + 1) for _ in range(n_args)]
         kwargs = dict(dx=dx, dy=dy) if n_args == 0 else {}
         try:
             if n_args != 0:
@@ -40,16 +37,32 @@ def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, log_file
             raise e
     return _build_tree(depth=0)
 
-def build_img_from_tree(tree, step=0):
-    def build_img_(tree):
-        if len(tree) == 2:
-            leaf = tree[0] + tree[1] * step
-            return leaf
+
+# Functions that don't broadcast over a leading batch dimension
+UNBATCHED_1ARG = {blur, sharpen, kaleidoscope, color_rotate}
+UNBATCHED_2ARG = {swap_phase_amplitude}
+
+
+def build_frames(tree, steps):
+    """Evaluate the tree for a batch of steps at once.
+
+    steps: shape (n_frames, 1, 1, 1)
+    returns: shape (n_frames, dy, dx, 3)
+    """
+    def _eval(node):
+        if len(node) == 2:
+            base, delta = node
+            return base + delta * steps
         else:
-            _, func, branches = tree
-            args = [build_img_(branch) for branch in branches]
+            _, func, branches = node
+            args = [_eval(branch) for branch in branches]
+            if func in UNBATCHED_1ARG:
+                return np.stack([func(args[0][i]) for i in range(args[0].shape[0])])
+            elif func in UNBATCHED_2ARG:
+                return np.stack([func(args[0][i], args[1][i]) for i in range(args[0].shape[0])])
             return func(*args)
-    return build_img_(tree)
+    return _eval(tree)
+
 
 def parse_cmd_args():
     parser = optparse.OptionParser()
@@ -61,50 +74,57 @@ def parse_cmd_args():
     parser.add_option('-d', '--duration', dest='duration', type=int, default=10, help='Video duration. Default: 10.')
     parser.add_option('-S', '--seed', dest='seed', type=int, default=None, help='Seed. Default: None.')
     parser.add_option('-e', '--extension', dest='ext', type=str, default="webm", help='Extension. Can be webm, avi, mp4, gif, flv, ogg, mpeg. Default: webm.')
-    parser.add_option('-b', '--bitrate', dest='bitrate', type=str, default=None, help='Constant bitrate. Default: None (variable bitrate).')
-    parser.add_option('-p', '--processes', dest='n_process', type=int, default=1, help='Number of parallel processes for frame creation. Default: 1.')
+    parser.add_option('-b', '--bitrate', dest='bitrate', type=str, default="6M", help='Constant bitrate. Default: 6M.')
+    parser.add_option('-C', '--codec', dest='codec', type=str, default="libopenh264", help='Video codec. Default: libopenh264.')
+    parser.add_option('-c', '--chunk_size', dest='chunk_size', type=int, default=30, help='Frames per batch. Lower values use less memory. Default: 30.')
     args, _ = parser.parse_args()
     return args
 
 
-def worker_fn(tree, n, step):
-    img = build_img_from_tree(tree, step=step)
-    img = np.rint(img.clip(0.0, 1.0)* 255.0).astype(np.uint8)
-    Image.fromarray(img).save("frames/image-{}.png".format(str(n).rjust(8, "0")))
-
 if __name__ == "__main__":
-
     args = parse_cmd_args()
 
-    try:
-        os.mkdir("videos")
-    except:
-        pass
+    os.makedirs("videos", exist_ok=True)
 
     n_videos = args.n_videos if args.seed is None else 1
 
     videofiles = os.listdir("videos")
     start_i = max([int(x.split("-")[1].split(".")[0]) for x in videofiles]) + 1 if videofiles else 1
 
+    n_frames = args.fps * args.duration
+    all_steps = np.arange(n_frames).reshape(-1, 1, 1, 1) / args.fps
+
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
-        try:
-            os.mkdir("frames")
-        except:
-            shutil.rmtree("frames")
-            time.sleep(0.5)
-            os.mkdir("frames")
 
-        duration = args.duration
-
-        print(f"Creating frames for video with {args.fps} in {args.ext} format")
-
+        print(f"Building tree for video {i+1}/{n_videos} (seed={video_n})")
         tree = build_tree(min_depth=6, max_depth=16, seed=video_n, weights=p, dx=args.width, dy=args.height, alpha=4e-3)
 
-        worker_args = [(tree, j, j/args.fps) for j in range(args.fps*args.duration)]
-        with mp.Pool(args.n_process) as pool:
-            pool.starmap(worker_fn, worker_args)
-        
-        bitrate_arg = "" if args.bitrate is None else f"-b {args.bitrate}"
+        output_path = f"videos/video-{i+start_i}.{args.ext}"
+        bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-f", "rawvideo",
+            "-pixel_format", "rgb24",
+            "-video_size", f"{args.width}x{args.height}",
+            "-framerate", str(args.fps),
+            "-i", "pipe:0",
+            "-vcodec", args.codec,
+            "-profile:v", "high",
+            "-coder", "cabac",
+            "-rc_mode", "quality",
+            *bitrate_args,
+            output_path
+        ]
 
-        os.system(f"ffmpeg -framerate {args.fps} -i frames/image-%08d.png {bitrate_arg} videos/video-{i+start_i}.{args.ext}")
+        print(f"Encoding {n_frames} frames to {output_path}")
+        chunks = range(0, n_frames, args.chunk_size)
+        with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
+            with tqdm(total=n_frames, unit="frame") as pbar:
+                for chunk_start in chunks:
+                    steps = all_steps[chunk_start:chunk_start + args.chunk_size]
+                    frames = build_frames(tree, steps)
+                    frames = np.rint(frames.clip(0.0, 1.0) * 255.0).astype(np.uint8)
+                    proc.stdin.write(frames.tobytes())
+                    pbar.update(len(steps))
+        print(f"Done: {output_path}")
