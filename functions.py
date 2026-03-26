@@ -1,5 +1,5 @@
+import time
 import numpy as np
-from config import get_config
 from scipy.ndimage import convolve
 from scipy.interpolate import NearestNDInterpolator
 from scipy.spatial.transform import Rotation as R
@@ -62,7 +62,7 @@ def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
 def mirrored_sigmoid(x):
-    return 1 / (1 + np.exp(x))    
+    return 1 / (1 + np.exp(x))
 
 def absolute_value(x):
     return np.abs(x)
@@ -77,7 +77,7 @@ def color_rotate(x):
         reshaped = x
     return reshaped
 
-gaussian_kernel_5 = np.array([[1, 4, 6, 4, 6],
+gaussian_kernel_5 = np.array([[1, 4, 6, 4, 1],
                               [4, 16, 24, 16, 4],
                               [6, 24, 36, 24, 6],
                               [4, 16, 24, 16, 4],
@@ -85,7 +85,7 @@ gaussian_kernel_5 = np.array([[1, 4, 6, 4, 6],
 gaussian_kernel_3 = np.array([[1, 2, 1],
                               [2, 4, 2],
                               [1, 2, 1]])/16
-sharpen_kernel_5 = np.array([[1, 4, 6, 4, 6],
+sharpen_kernel_5 = np.array([[1, 4, 6, 4, 1],
                              [4, 16, 24, 16, 4],
                              [6, 24, -476, 24, 6],
                              [4, 16, 24, 16, 4],
@@ -116,9 +116,6 @@ def swap_phase_amplitude(a, b, axes=[0, 1]):
     output_a = np.abs(np.fft.ifft2(swapped_a, axes=axes)).astype(np.uint8)
     output_b = np.abs(np.fft.ifft2(swapped_b, axes=axes)).astype(np.uint8)
     return output_a#, output_bnterp
-
-def get_angle(x, y, dx=None, dy=None):
-    return np.arctan2(dx/2 - x, dy/2 - y)
 
 def get_radius(x, y):
     return np.sqrt(x**2 + y**2)
@@ -165,6 +162,7 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (1, np.sin),
                    (1, np.cos),
                    (1, sigmoid),
+                   (1, mirrored_sigmoid),
                    (1, sharpen),
                    (1, blur),
                    (1, absolute_value),

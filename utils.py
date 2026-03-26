@@ -21,11 +21,7 @@ def make_kwargs(config):
                           output_path=config.output_path,
                           font_path=config.font_path)
 
-    post_kwargs = dict(filepath=config.output_path,
-                       post=config.post_to_facebook,
-                       token=config.token)
-
-    return make_text_kwargs, make_background_kwargs, combine_kwargs, post_kwargs
+    return make_text_kwargs, make_background_kwargs, combine_kwargs
 
 def makedirs(paths):
     for path in paths:

@@ -10,7 +10,7 @@ import os
 def random_sequence_length(max_length, min_length):
     if max_length is None and min_length is not None:
         sequence_length = min_length
-    elif max_length is not None and min_length is not None:
+    elif max_length is not None and min_length is None:
         sequence_length = max_length
     elif max_length is not None and min_length is not None:
         sequence_length = np.random.randint(min_length, max_length + 1)

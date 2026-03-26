@@ -14,8 +14,8 @@ import multiprocessing as mp
 p = load_personality_list("personality.json")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN")
 
-if not (FFMPEG_BIN + ";") in os.environ["PATH"]:
-    os.environ["PATH"] = (FFMPEG_BIN + ";") + os.environ["PATH"]
+if not (FFMPEG_BIN + os.pathsep) in os.environ["PATH"]:
+    os.environ["PATH"] = (FFMPEG_BIN + os.pathsep) + os.environ["PATH"]
 
 def random_delta(tensor, alpha=5e-3):
     random_direction = np.random.choice([1, -1]) * alpha

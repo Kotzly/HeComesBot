@@ -13,8 +13,6 @@ def parse_sysargs(parser):
     config = load_default_config()._asdict()
     if not use_default:
         config.update(input_config)
-        # with open("./config.json", "w") as config_file:
-            # json.dump(config, config_file, indent=4)
     personality = load_personality_list(config["personality_filepath"])
     config.update({"personality":personality})
     if config["seed"] is None:
