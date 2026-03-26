@@ -4,10 +4,15 @@ import subprocess
 import optparse
 import multiprocessing as mp
 from numpy.random import rand
-from tqdm import tqdm
 from config import load_personality_list
 from build import get_random_function
 from functions import blur, sharpen, kaleidoscope, color_rotate, swap_phase_amplitude
+
+try:
+    import numba
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
 
 p = load_personality_list("personality.json")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN")
@@ -39,40 +44,108 @@ def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, seed=42,
     return _build_tree(depth=0)
 
 
-# Functions that don't broadcast over a leading batch dimension
 UNBATCHED_1ARG = {blur, sharpen, kaleidoscope, color_rotate}
 UNBATCHED_2ARG = {swap_phase_amplitude}
 
+# Numpy functions that Numba supports in nopython mode
+NUMBA_SAFE = {
+    np.sin:      'np.sin',
+    np.cos:      'np.cos',
+    np.add:      'np.add',
+    np.subtract: 'np.subtract',
+    np.multiply: 'np.multiply',
+    np.abs:      'np.abs',
+}
 
-def build_frames(tree, steps):
-    """Evaluate the tree for a batch of steps at once.
 
-    steps: shape (n_frames, 1, 1, 1)
-    returns: shape (n_frames, dy, dx, 3)
+def _tree_to_source(tree, registry, counter):
+    """Recursively generate a flat list of assignment statements for the tree.
+
+    Returns (var_name, statements, is_numba_safe).
     """
-    def _eval(node):
-        if len(node) == 2:
-            base, delta = node
-            return base + delta * steps
-        else:
-            _, func, branches = node
-            args = [_eval(branch) for branch in branches]
-            if func in UNBATCHED_1ARG:
-                return np.stack([func(args[0][i]) for i in range(args[0].shape[0])])
-            elif func in UNBATCHED_2ARG:
-                return np.stack([func(args[0][i], args[1][i]) for i in range(args[0].shape[0])])
-            return func(*args)
-    return _eval(tree)
+    nc = counter[0]
+    counter[0] += 1
+    var = f'_t{nc}'
+
+    if len(tree) == 2:
+        base, delta = tree
+        bname, dname = f'_base{nc}', f'_delta{nc}'
+        registry[bname] = base
+        registry[dname] = delta
+        return var, [f'{var} = {bname} + {dname} * steps'], True
+
+    _, func, branches = tree
+    stmts, child_vars, all_safe = [], [], True
+
+    for branch in branches:
+        cvar, cstmts, csafe = _tree_to_source(branch, registry, counter)
+        stmts.extend(cstmts)
+        child_vars.append(cvar)
+        all_safe = all_safe and csafe
+
+    args_str = ', '.join(child_vars)
+
+    if func in UNBATCHED_1ARG:
+        fname = f'_func{nc}'
+        registry[fname] = func
+        c = child_vars[0]
+        stmts.append(f'{var} = np.stack([{fname}({c}[i]) for i in range({c}.shape[0])])')
+        return var, stmts, False
+
+    elif func in UNBATCHED_2ARG:
+        fname = f'_func{nc}'
+        registry[fname] = func
+        ca, cb = child_vars[0], child_vars[1]
+        stmts.append(f'{var} = np.stack([{fname}({ca}[i], {cb}[i]) for i in range({ca}.shape[0])])')
+        return var, stmts, False
+
+    elif func in NUMBA_SAFE:
+        stmts.append(f'{var} = {NUMBA_SAFE[func]}({args_str})')
+        return var, stmts, all_safe
+
+    else:
+        fname = f'_func{nc}'
+        registry[fname] = func
+        stmts.append(f'{var} = {fname}({args_str})')
+        return var, stmts, False
 
 
-_worker_tree = None
+def compile_tree(tree, use_numba=True):
+    """Compile tree to a callable, JIT-compiled with Numba if the tree is safe."""
+    registry = {'np': np}
+    result_var, stmts, is_numba_safe = _tree_to_source(tree, registry, [0])
 
-def _init_worker(tree):
-    global _worker_tree
-    _worker_tree = tree
+    body = '\n    '.join(stmts)
+    src = f'def _compiled(steps):\n    {body}\n    return {result_var}\n'
+
+    exec(src, registry)
+    fn = registry['_compiled']
+
+    if use_numba and is_numba_safe and NUMBA_AVAILABLE:
+        try:
+            fn = numba.jit(nopython=True, cache=False)(fn)
+            print("Tree compiled with Numba (nopython mode)")
+        except Exception as e:
+            print(f"Numba failed ({e}), using Python")
+    else:
+        reason = (
+            "disabled by user" if not use_numba
+            else "exotic functions" if not is_numba_safe
+            else "Numba not installed"
+        )
+        print(f"Using Python ({reason})")
+
+    return fn
+
+
+_worker_fn = None
+
+def _init_worker(tree, use_numba):
+    global _worker_fn
+    _worker_fn = compile_tree(tree, use_numba=use_numba)
 
 def _compute_chunk(steps):
-    frames = build_frames(_worker_tree, steps)
+    frames = _worker_fn(steps)
     return np.rint(frames.clip(0.0, 1.0) * 255.0).astype(np.uint8)
 
 
@@ -87,15 +160,34 @@ def parse_cmd_args():
     parser.add_option('-S', '--seed', dest='seed', type=int, default=None, help='Seed. Default: None.')
     parser.add_option('-e', '--extension', dest='ext', type=str, default="webm", help='Extension. Can be webm, avi, mp4, gif, flv, ogg, mpeg. Default: webm.')
     parser.add_option('-b', '--bitrate', dest='bitrate', type=str, default="6M", help='Constant bitrate. Default: 6M.')
-    parser.add_option('-C', '--codec', dest='codec', type=str, default="libopenh264", help='Video codec. Default: libopenh264.')
+    parser.add_option('-C', '--codec', dest='codec', type=str, default=None, help='Video codec. Defaults to recommended codec for the chosen extension.')
     parser.add_option('-c', '--chunk_size', dest='chunk_size', type=int, default=10, help='Frames per batch. Lower values use less memory. Default: 10.')
     parser.add_option('-p', '--processes', dest='n_process', type=int, default=3, help='Number of parallel workers. Default: 3.')
+    parser.add_option('--no-numba', dest='use_numba', action='store_false', default=True, help='Disable Numba JIT compilation.')
     args, _ = parser.parse_args()
     return args
 
 
+RECOMMENDED_CODECS = {
+    "mp4":  "libopenh264",
+    "avi":  "mpeg4",
+    "webm": "libvpx-vp9",
+    "mkv":  "libopenh264",
+    "ogg":  "libtheora",
+    "flv":  "flv",
+    "mpeg": "mpeg2video",
+    "gif":  "gif",
+}
+
 if __name__ == "__main__":
     args = parse_cmd_args()
+
+    recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
+    if args.codec is None:
+        args.codec = recommended
+    elif args.codec != recommended:
+        print(f"Warning: '{args.codec}' is not the recommended codec for .{args.ext}.")
+        print(f"  Recommended: '{recommended}'. The video may not play properly.")
 
     os.makedirs("videos", exist_ok=True)
 
@@ -116,6 +208,10 @@ if __name__ == "__main__":
 
         output_path = f"videos/video-{i+start_i}.{args.ext}"
         bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
+        openh264_args = (
+            ["-profile:v", "high", "-coder", "cabac", "-rc_mode", "bitrate"]
+            if args.codec == "libopenh264" else []
+        )
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-f", "rawvideo",
@@ -124,18 +220,16 @@ if __name__ == "__main__":
             "-framerate", str(args.fps),
             "-i", "pipe:0",
             "-vcodec", args.codec,
-            "-profile:v", "high",
-            "-coder", "cabac",
-            "-rc_mode", "bitrate",
+            *openh264_args,
             *bitrate_args,
             output_path
         ]
+        
+        print("Running:\n\t{}".format(' '.join(ffmpeg_cmd)))
 
         print(f"Encoding {n_frames} frames to {output_path}")
-        with mp.Pool(args.n_process, initializer=_init_worker, initargs=(tree,)) as pool:
+        with mp.Pool(args.n_process, initializer=_init_worker, initargs=(tree, args.use_numba)) as pool:
             with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
-                with tqdm(total=n_frames, unit="frame") as pbar:
-                    for frames in pool.imap(_compute_chunk, chunk_steps):
-                        proc.stdin.write(frames.tobytes())
-                        pbar.update(len(frames))
+                for frames in pool.imap(_compute_chunk, chunk_steps):
+                    proc.stdin.write(frames.tobytes())
         print(f"Done: {output_path}")
