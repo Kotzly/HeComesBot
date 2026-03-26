@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+videos/
+frames/
+history/
+*.png
+*.mp4
+*.webm
+*.avi
+*.gif
+log.txt
