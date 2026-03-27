@@ -6,16 +6,11 @@ import multiprocessing as mp
 from numpy.random import rand
 from config import load_personality_list
 from build import get_random_function
-from functions import blur, sharpen, kaleidoscope, color_rotate, swap_phase_amplitude
-
 p = load_personality_list("personality.json")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN")
 
 if FFMPEG_BIN and not (FFMPEG_BIN + os.pathsep) in os.environ["PATH"]:
     os.environ["PATH"] = (FFMPEG_BIN + os.pathsep) + os.environ["PATH"]
-
-UNBATCHED_1ARG = {blur, sharpen, kaleidoscope, color_rotate}
-UNBATCHED_2ARG = {swap_phase_amplitude}
 
 
 def random_delta(tensor, alpha=5e-3):
@@ -47,10 +42,6 @@ def eval_tree(tree, steps):
         return base + delta * steps
     _, func, branches = tree
     args = [eval_tree(b, steps) for b in branches]
-    if func in UNBATCHED_1ARG:
-        return np.stack([func(args[0][i]) for i in range(args[0].shape[0])])
-    elif func in UNBATCHED_2ARG:
-        return np.stack([func(args[0][i], args[1][i]) for i in range(args[0].shape[0])])
     return func(*args)
 
 
