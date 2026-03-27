@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import subprocess
 import optparse
@@ -6,7 +7,7 @@ import multiprocessing as mp
 from numpy.random import rand
 from config import load_personality_list
 from build import get_random_function
-from functions import blur, sharpen, kaleidoscope, color_rotate, swap_phase_amplitude
+from functions_numba import UNBATCHED_1ARG, UNBATCHED_2ARG, NUMBA_SAFE
 
 try:
     import numba
@@ -43,19 +44,6 @@ def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, seed=42,
             raise e
     return _build_tree(depth=0)
 
-
-UNBATCHED_1ARG = {blur, sharpen, kaleidoscope, color_rotate}
-UNBATCHED_2ARG = {swap_phase_amplitude}
-
-# Numpy functions that Numba supports in nopython mode
-NUMBA_SAFE = {
-    np.sin:      'np.sin',
-    np.cos:      'np.cos',
-    np.add:      'np.add',
-    np.subtract: 'np.subtract',
-    np.multiply: 'np.multiply',
-    np.abs:      'np.abs',
-}
 
 
 def _tree_to_source(tree, registry, counter):
@@ -100,7 +88,7 @@ def _tree_to_source(tree, registry, counter):
         return var, stmts, False
 
     elif func in NUMBA_SAFE:
-        stmts.append(f'{var} = {NUMBA_SAFE[func]}({args_str})')
+        stmts.extend(NUMBA_SAFE[func](var, child_vars))
         return var, stmts, all_safe
 
     else:
@@ -118,6 +106,8 @@ def compile_tree(tree, use_numba=True):
     body = '\n    '.join(stmts)
     src = f'def _compiled(steps):\n    {body}\n    return {result_var}\n'
 
+    print(f"Compiled source: {len(src.encode())} bytes. Starting to compile.")
+    t0 = time.time()
     exec(src, registry)
     fn = registry['_compiled']
 
@@ -134,6 +124,7 @@ def compile_tree(tree, use_numba=True):
             else "Numba not installed"
         )
         print(f"Using Python ({reason})")
+    print(f"Finished compilation in {time.time() - t0:.2f}s")
 
     return fn
 
