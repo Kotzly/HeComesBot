@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tree Editor</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- Left: build settings -->
+  <div id="build-panel">
+    <h2>Build</h2>
+
+    <label>Seed
+      <div class="input-row">
+        <input type="number" id="seed-input" value="42">
+        <button id="random-seed-btn" title="Random seed">&#x1F3B2;</button>
+      </div>
+    </label>
+
+    <label>Width  <input type="number" id="width-input"  value="256"></label>
+    <label>Height <input type="number" id="height-input" value="256"></label>
+    <label>Min depth <input type="number" id="min-depth-input" value="6"></label>
+    <label>Max depth <input type="number" id="max-depth-input" value="16"></label>
+
+    <label>Personality
+      <select id="personality-select"></select>
+    </label>
+
+    <button id="build-btn" class="primary-btn">Build Tree</button>
+
+    <hr>
+
+    <button id="preview-btn" class="secondary-btn" disabled>Preview Frame</button>
+
+    <hr>
+
+    <div id="legend">
+      <div class="legend-row"><span class="dot leaf"></span> Leaf</div>
+      <div class="legend-row"><span class="dot unary"></span> Unary</div>
+      <div class="legend-row"><span class="dot binary"></span> Binary</div>
+    </div>
+
+    <div id="tree-stats"></div>
+  </div>
+
+  <!-- Center: tree -->
+  <div id="tree-container">
+    <svg id="tree-svg"></svg>
+    <div id="tree-hint">Build a tree to visualize it.<br><small>Click node to edit &nbsp;·&nbsp; Double-click to collapse</small></div>
+  </div>
+
+  <!-- Right: node editor -->
+  <div id="node-panel" class="hidden">
+    <h2>Node Editor</h2>
+
+    <div class="field-row"><span class="label">ID</span><span id="node-id-display" class="mono"></span></div>
+    <div class="field-row"><span class="label">Function</span><span id="node-func-display" class="mono"></span></div>
+    <div class="field-row"><span class="label">Arity</span><span id="node-arity-display"></span></div>
+
+    <hr>
+    <h3>Change Function</h3>
+    <select id="func-select"></select>
+    <button id="apply-func-btn" class="primary-btn">Apply</button>
+
+    <hr>
+    <h3>Regenerate Subtree</h3>
+    <label>Seed
+      <div class="input-row">
+        <input type="number" id="regen-seed-input" value="0">
+        <button id="regen-random-btn" title="Random seed">&#x1F3B2;</button>
+      </div>
+    </label>
+    <button id="regen-btn" class="danger-btn">Regenerate</button>
+  </div>
+
+</div>
+
+<!-- Preview modal -->
+<div id="preview-modal" class="modal hidden">
+  <div class="modal-content">
+    <button class="modal-close" id="modal-close-btn">&#x2715;</button>
+    <img id="modal-img" alt="Preview">
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
