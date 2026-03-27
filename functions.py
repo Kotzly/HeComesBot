@@ -45,6 +45,38 @@ def circle(ellipsoid=True, dx=None, dy=None):
 def saddle(a, b):
     return a**2 - b**2
 
+def circular_mean(h1, h2):
+    """Mean of two hue values along the shorter arc."""
+    a1, a2 = h1 * (2 * np.pi), h2 * (2 * np.pi)
+    return np.arctan2(np.sin(a1) + np.sin(a2), np.cos(a1) + np.cos(a2)) / (2 * np.pi) % 1.0
+
+def circular_mean_far(h1, h2):
+    """Mean of two hue values along the longer arc."""
+    return (circular_mean(h1, h2) + 0.5) % 1.0
+
+def hue_diff(h1, h2):
+    """Angular distance between two hue values, in [0, 0.5]."""
+    diff = np.abs(h1 - h2) % 1.0
+    return np.minimum(diff, 1.0 - diff)
+
+def hue_rotate(h1, h2):
+    """Rotate h1 by h2 (circular addition)."""
+    return (h1 + h2) % 1.0
+
+def hsv_to_rgb(hsv):
+    """Convert (..., 3) HSV array (H in [0,1]) to RGB."""
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    i = (h * 6).astype(np.int32) % 6
+    f = h * 6 - np.floor(h * 6)
+    p, q, t = v * (1 - s), v * (1 - f * s), v * (1 - (1 - f) * s)
+    rgb = np.zeros_like(hsv)
+    for sector, (r, g, b) in enumerate([(v,t,p),(q,v,p),(p,v,t),(p,q,v),(t,p,v),(v,p,q)]):
+        mask = i == sector
+        rgb[..., 0] = np.where(mask, r, rgb[..., 0])
+        rgb[..., 1] = np.where(mask, g, rgb[..., 1])
+        rgb[..., 2] = np.where(mask, b, rgb[..., 2])
+    return rgb
+
 def safe_divide(a, b, eps=1e-3):
     return a / np.where(np.abs(b) < eps, np.float32(eps), b)
 
@@ -161,7 +193,11 @@ BUILD_FUNCTIONS = ((0, rand_color),
                    (2, safe_divide),
                    (2, safe_modulus),
                    (2, saddle),
-                   (2, swap_phase_amplitude))
+                   (2, swap_phase_amplitude),
+                   (2, circular_mean),
+                   (2, circular_mean_far),
+                   (2, hue_diff),
+                   (2, hue_rotate))
 
 BUILD_FUNCTIONS = sorted(BUILD_FUNCTIONS, key=lambda x: x[1].__name__)
                    # 12 functions
