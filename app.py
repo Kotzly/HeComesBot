@@ -1,4 +1,5 @@
 import uuid
+import pickle
 import numpy as np
 import io
 import base64
@@ -6,17 +7,16 @@ import os
 from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image
 
-from functions import BUILD_FUNCTIONS
+from functions import BUILD_FUNCTIONS, linear_mesh
 from build import get_random_function
 from config import load_personality_list
 from video import random_delta
 
 app = Flask(__name__, static_folder='static', static_url_path='')
 
-# In-memory state: tree_id -> session dict
 _sessions = {}
+SAVE_DIR = 'saved_trees'
 
-# Function lookup tables (built once at startup)
 FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
 FUNCS_BY_ARITY = {}
 for _n, _f in BUILD_FUNCTIONS:
@@ -24,6 +24,68 @@ for _n, _f in BUILD_FUNCTIONS:
 for _arity in FUNCS_BY_ARITY:
     FUNCS_BY_ARITY[_arity].sort()
 
+
+# ── Leaf geometry helpers ─────────────────────────────────────────────────────
+
+def _random_point():
+    return (1 - np.random.rand(2) ** 2) * 4 - 2
+
+
+def _random_radius():
+    return np.maximum(1 - np.random.rand(2) ** 2, 0.01)
+
+
+def _cone_array(cx, cy, rx, ry, dx, dy):
+    x, y = linear_mesh(dx=dx, dy=dy)
+    return np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2).reshape(dy, dx, 1).astype(np.float32)
+
+
+def _circle_array(cx, cy, rx, ry, color, dx, dy):
+    cone = _cone_array(cx, cy, rx, ry, dx, dy).squeeze()
+    circ = np.ones((dy, dx, 3), dtype=np.float32) * np.array(color, dtype=np.float32).reshape(1, 1, 3)
+    circ[cone > 1] = 0
+    return circ
+
+
+def _build_leaf(func, dx, dy, alpha):
+    """Build a leaf array and capture editable params where possible."""
+    fname = func.__name__
+    if fname == 'rand_color':
+        color = np.random.rand(3).astype(np.float32)
+        base = color.reshape(1, 1, 3)
+        params = {'color': color.tolist()}
+    elif fname == 'cone':
+        cx, cy = _random_point()
+        rx, ry = _random_radius()
+        base = _cone_array(cx, cy, rx, ry, dx, dy)
+        params = {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry)}
+    elif fname == 'circle':
+        cx, cy = _random_point()
+        rx, ry = _random_radius()
+        color = np.random.rand(3).astype(np.float32)
+        base = _circle_array(cx, cy, rx, ry, color, dx, dy)
+        params = {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry),
+                  'color': color.tolist()}
+    else:
+        base = func(dx=dx, dy=dy).astype(np.float32)
+        params = {}
+    delta = np.float32(random_delta(alpha))
+    return base, delta, params
+
+
+def _recompute_leaf(func_name, params, dx, dy):
+    """Recompute leaf base array from stored params."""
+    if func_name == 'rand_color':
+        return np.array(params['color'], dtype=np.float32).reshape(1, 1, 3)
+    if func_name == 'cone':
+        return _cone_array(params['cx'], params['cy'], params['rx'], params['ry'], dx, dy)
+    if func_name == 'circle':
+        return _circle_array(params['cx'], params['cy'], params['rx'], params['ry'],
+                             params['color'], dx, dy)
+    return None  # x_var, y_var: fixed by grid dimensions
+
+
+# ── Tree helpers ──────────────────────────────────────────────────────────────
 
 def _new_id():
     return str(uuid.uuid4())[:8]
@@ -33,10 +95,10 @@ def _build_rich(depth, min_depth, max_depth, dx, dy, weights, alpha, leaves):
     n_args, func = get_random_function(depth, p=weights, min_depth=min_depth, max_depth=max_depth)
     nid = _new_id()
     if n_args == 0:
-        base = func(dx=dx, dy=dy).astype(np.float32)
-        delta = np.float32(random_delta(alpha))
-        leaves[nid] = {'base': base, 'delta': delta}
-        return {'id': nid, 'func': func.__name__, 'arity': 0, 'children': []}
+        base, delta, params = _build_leaf(func, dx, dy, alpha)
+        leaves[nid] = {'base': base, 'delta': delta, 'func': func.__name__, 'params': params}
+        return {'id': nid, 'func': func.__name__, 'arity': 0, 'children': [],
+                'delta': float(delta), 'params': params}
     children = [
         _build_rich(depth + 1, min_depth, max_depth, dx, dy, weights, alpha, leaves)
         for _ in range(n_args)
@@ -54,7 +116,6 @@ def _eval_rich(node, steps, leaves):
 
 
 def _collect_leaf_ids(node):
-    """Return IDs of all leaf (arity=0) nodes in the subtree."""
     if node['arity'] == 0:
         return [node['id']]
     ids = []
@@ -74,7 +135,6 @@ def _find_node(tree, node_id):
 
 
 def _find_parent(tree, node_id):
-    """Return (parent_dict, child_index) or None if node_id is the root."""
     for i, child in enumerate(tree.get('children', [])):
         if child['id'] == node_id:
             return tree, i
@@ -83,6 +143,18 @@ def _find_parent(tree, node_id):
             return result
     return None
 
+
+def _node_depth(tree, node_id, d=0):
+    if tree['id'] == node_id:
+        return d
+    for child in tree.get('children', []):
+        result = _node_depth(child, node_id, d + 1)
+        if result is not None:
+            return result
+    return None
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -97,6 +169,13 @@ def get_functions():
 @app.route('/api/personalities')
 def get_personalities():
     files = sorted(f for f in os.listdir('.') if f.endswith('.json') and 'personality' in f)
+    return jsonify(files)
+
+
+@app.route('/api/trees')
+def list_trees():
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    files = sorted(f[:-4] for f in os.listdir(SAVE_DIR) if f.endswith('.pkl'))
     return jsonify(files)
 
 
@@ -118,12 +197,11 @@ def build():
 
     tree_id = _new_id()
     _sessions[tree_id] = {
-        'tree': tree,
-        'leaves': leaves,
+        'tree': tree, 'leaves': leaves,
         'meta': {'dx': dx, 'dy': dy, 'seed': seed, 'min_depth': min_depth,
                  'max_depth': max_depth, 'alpha': alpha},
     }
-    return jsonify({'tree_id': tree_id, 'tree': tree})
+    return jsonify({'tree_id': tree_id, 'tree': tree, 'meta': _sessions[tree_id]['meta']})
 
 
 @app.route('/api/preview', methods=['POST'])
@@ -136,7 +214,6 @@ def preview():
 
     dx, dy = session['meta']['dx'], session['meta']['dy']
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-
     raw = _eval_rich(session['tree'], steps, session['leaves'])
     frame = np.broadcast_to(raw[0].clip(0, 1), (dy, dx, raw.shape[-1])).copy()
     if frame.shape[-1] != 3:
@@ -147,6 +224,42 @@ def preview():
     Image.fromarray(img_8).save(buf, format='PNG')
     b64 = base64.b64encode(buf.getvalue()).decode()
     return jsonify({'image': f'data:image/png;base64,{b64}'})
+
+
+@app.route('/api/save', methods=['POST'])
+def save_tree():
+    data = request.json
+    tree_id = data['tree_id']
+    name = data.get('name', tree_id).strip()
+    name = ''.join(c for c in name if c.isalnum() or c in '._- ')
+    if not name:
+        return jsonify({'error': 'invalid name'}), 400
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({'error': 'unknown tree_id'}), 404
+
+    os.makedirs(SAVE_DIR, exist_ok=True)
+    path = os.path.join(SAVE_DIR, f'{name}.pkl')
+    with open(path, 'wb') as f:
+        pickle.dump(session, f)
+    return jsonify({'name': name})
+
+
+@app.route('/api/load', methods=['POST'])
+def load_tree():
+    data = request.json
+    name = os.path.basename(data.get('name', ''))
+    path = os.path.join(SAVE_DIR, f'{name}.pkl')
+    if not os.path.exists(path):
+        return jsonify({'error': 'file not found'}), 404
+
+    with open(path, 'rb') as f:
+        session = pickle.load(f)
+
+    tree_id = _new_id()
+    _sessions[tree_id] = session
+    return jsonify({'tree_id': tree_id, 'tree': session['tree'], 'meta': session['meta']})
 
 
 @app.route('/api/node/set-func', methods=['POST'])
@@ -172,9 +285,17 @@ def set_func():
 
     if new_arity == old_arity:
         node['func'] = func_name
+        # If becoming a leaf with same arity (0→0), regenerate leaf data
+        if new_arity == 0:
+            for lid in _collect_leaf_ids(node):
+                session['leaves'].pop(lid, None)
+            base, delta, params = _build_leaf(new_func, meta['dx'], meta['dy'], meta['alpha'])
+            session['leaves'][node_id] = {'base': base, 'delta': delta,
+                                          'func': func_name, 'params': params}
+            node.update({'delta': float(delta), 'params': params})
         return jsonify({'tree': session['tree']})
 
-    # Arity is changing — remove old leaf data
+    # Arity is changing
     for lid in _collect_leaf_ids(node):
         session['leaves'].pop(lid, None)
 
@@ -182,22 +303,26 @@ def set_func():
     node['arity'] = new_arity
 
     if new_arity == 0:
-        base = new_func(dx=meta['dx'], dy=meta['dy']).astype(np.float32)
-        delta = np.float32(random_delta(meta['alpha']))
-        session['leaves'][node['id']] = {'base': base, 'delta': delta}
-        node['children'] = []
+        base, delta, params = _build_leaf(new_func, meta['dx'], meta['dy'], meta['alpha'])
+        session['leaves'][node_id] = {'base': base, 'delta': delta,
+                                      'func': func_name, 'params': params}
+        node.update({'children': [], 'delta': float(delta), 'params': params})
     else:
+        nd = _node_depth(session['tree'], node_id) or 0
+        child_depth = nd + 1
+        eff_max = max(meta['max_depth'] - child_depth, 2)
+        eff_min = max(min(meta['min_depth'] - child_depth, eff_max - 1), 1)
         weights = load_personality_list('personality.json')
-        child_max = max(3, meta['max_depth'] // 2)
-        child_min = max(1, meta['min_depth'] // 2)
         new_children = []
         for _ in range(new_arity):
             np.random.seed(np.random.randint(0, 2**31))
-            child = _build_rich(0, child_min, child_max,
+            child = _build_rich(0, eff_min, eff_max,
                                 meta['dx'], meta['dy'], weights, meta['alpha'],
                                 session['leaves'])
             new_children.append(child)
         node['children'] = new_children
+        node.pop('delta', None)
+        node.pop('params', None)
 
     return jsonify({'tree': session['tree']})
 
@@ -221,9 +346,13 @@ def regenerate():
     for lid in _collect_leaf_ids(node):
         session['leaves'].pop(lid, None)
 
+    nd = _node_depth(session['tree'], node_id) or 0
+    eff_max = max(meta['max_depth'] - nd, 2)
+    eff_min = max(min(meta['min_depth'] - nd, eff_max - 1), 1)
+
     weights = load_personality_list('personality.json')
     np.random.seed(seed % (2**32 - 1))
-    new_subtree = _build_rich(0, meta['min_depth'], meta['max_depth'],
+    new_subtree = _build_rich(0, eff_min, eff_max,
                               meta['dx'], meta['dy'], weights, meta['alpha'],
                               session['leaves'])
 
@@ -234,6 +363,43 @@ def regenerate():
         parent['children'][idx] = new_subtree
 
     return jsonify({'tree': session['tree'], 'new_node_id': new_subtree['id']})
+
+
+@app.route('/api/leaf/set-params', methods=['POST'])
+def set_leaf_params():
+    data = request.json
+    tree_id = data['tree_id']
+    node_id = data['node_id']
+    new_params = data.get('params', {})
+    new_delta = data.get('delta', None)
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({'error': 'unknown tree_id'}), 404
+
+    node = _find_node(session['tree'], node_id)
+    if node is None or node['arity'] != 0:
+        return jsonify({'error': 'node not found or not a leaf'}), 404
+
+    leaf = session['leaves'].get(node_id)
+    if leaf is None:
+        return jsonify({'error': 'leaf data missing'}), 500
+
+    meta = session['meta']
+
+    if new_params:
+        merged = {**leaf.get('params', {}), **new_params}
+        new_base = _recompute_leaf(node['func'], merged, meta['dx'], meta['dy'])
+        if new_base is not None:
+            leaf['base'] = new_base
+            leaf['params'] = merged
+            node['params'] = merged
+
+    if new_delta is not None:
+        leaf['delta'] = np.float32(new_delta)
+        node['delta'] = float(new_delta)
+
+    return jsonify({'tree': session['tree']})
 
 
 if __name__ == '__main__':

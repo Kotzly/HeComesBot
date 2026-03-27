@@ -20,8 +20,8 @@
       </div>
     </label>
 
-    <label>Width  <input type="number" id="width-input"  value="256"></label>
-    <label>Height <input type="number" id="height-input" value="256"></label>
+    <label>Width  <input type="number" id="width-input"     value="256"></label>
+    <label>Height <input type="number" id="height-input"    value="256"></label>
     <label>Min depth <input type="number" id="min-depth-input" value="6"></label>
     <label>Max depth <input type="number" id="max-depth-input" value="16"></label>
 
@@ -33,7 +33,25 @@
 
     <hr>
 
-    <button id="preview-btn" class="secondary-btn" disabled>Preview Frame</button>
+    <h2>Save / Load</h2>
+    <label>Name <input type="text" id="save-name-input" placeholder="my_tree"></label>
+    <button id="save-btn" class="secondary-btn" disabled>Save</button>
+
+    <label>Saved trees
+      <div class="input-row">
+        <select id="load-select" style="flex:1"></select>
+        <button id="refresh-trees-btn" title="Refresh list">&#x21BB;</button>
+      </div>
+    </label>
+    <button id="load-btn" class="secondary-btn">Load</button>
+
+    <hr>
+
+    <h2>Preview</h2>
+    <button id="preview-btn" class="secondary-btn" disabled>Render Frame</button>
+    <div id="preview-wrap" style="display:none">
+      <img id="preview-img" alt="Preview" title="Click to enlarge">
+    </div>
 
     <hr>
 
@@ -49,16 +67,17 @@
   <!-- Center: tree -->
   <div id="tree-container">
     <svg id="tree-svg"></svg>
-    <div id="tree-hint">Build a tree to visualize it.<br><small>Click node to edit &nbsp;·&nbsp; Double-click to collapse</small></div>
+    <div id="tree-hint">Build a tree to visualize it.<br>
+      <small>Click node to edit &nbsp;·&nbsp; Double-click to collapse</small>
+    </div>
   </div>
 
   <!-- Right: node editor -->
   <div id="node-panel" class="hidden">
-    <h2>Node Editor</h2>
-
-    <div class="field-row"><span class="label">ID</span><span id="node-id-display" class="mono"></span></div>
+    <h2>Node</h2>
+    <div class="field-row"><span class="label">ID</span>    <span id="node-id-display"   class="mono"></span></div>
     <div class="field-row"><span class="label">Function</span><span id="node-func-display" class="mono"></span></div>
-    <div class="field-row"><span class="label">Arity</span><span id="node-arity-display"></span></div>
+    <div class="field-row"><span class="label">Arity</span>  <span id="node-arity-display"></span></div>
 
     <hr>
     <h3>Change Function</h3>
@@ -74,11 +93,27 @@
       </div>
     </label>
     <button id="regen-btn" class="danger-btn">Regenerate</button>
+
+    <!-- Leaf editor (shown only for arity-0 nodes) -->
+    <div id="leaf-editor" class="hidden">
+      <hr>
+      <h3>Leaf Values</h3>
+      <div id="leaf-controls"></div>
+
+      <label id="delta-row">Animation delta
+        <div class="input-row">
+          <input type="range" id="delta-slider" min="-0.05" max="0.05" step="0.001" style="flex:1">
+          <input type="number" id="delta-num" step="0.001" style="width:70px">
+        </div>
+      </label>
+
+      <button id="update-leaf-btn" class="primary-btn">Update Leaf</button>
+    </div>
   </div>
 
 </div>
 
-<!-- Preview modal -->
+<!-- Enlarged preview modal -->
 <div id="preview-modal" class="modal hidden">
   <div class="modal-content">
     <button class="modal-close" id="modal-close-btn">&#x2715;</button>

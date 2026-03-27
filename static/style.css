@@ -170,6 +170,31 @@ hr { border: none; border-top: 1px solid #3c3c3c; }
   user-select: none;
 }
 
+/* ── Leaf editor ──────────────────────────────────────────────────────────── */
+#leaf-editor.hidden { display: none; }
+
+.muted {
+  font-size: 11px;
+  color: #666;
+  font-style: italic;
+}
+
+/* ── Preview ──────────────────────────────────────────────────────────────── */
+#preview-wrap {
+  margin-top: 6px;
+}
+
+#preview-img {
+  width: 100%;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #3c3c3c;
+}
+
+#preview-img:hover {
+  border-color: #0078d4;
+}
+
 /* ── Modal ────────────────────────────────────────────────────────────────── */
 .modal {
   position: fixed;
