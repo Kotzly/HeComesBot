@@ -98,6 +98,8 @@ def parse_cmd_args():
     parser.add_option('-C', '--codec', dest='codec', type=str, default=None, help='Video codec. Defaults to recommended codec for the chosen extension.')
     parser.add_option('-c', '--chunk_size', dest='chunk_size', type=int, default=10, help='Frames per batch. Default: 10.')
     parser.add_option('-p', '--processes', dest='n_process', type=int, default=3, help='Number of parallel workers. Default: 3.')
+    parser.add_option('--min-depth', dest='min_depth', type=int, default=6, help='Minimum tree depth. Default: 6.')
+    parser.add_option('--max-depth', dest='max_depth', type=int, default=16, help='Maximum tree depth. Default: 16.')
     parser.add_option('--color-space', dest='color_space', type=str, default='rgb',
                       help='Color space: rgb, hsv, cmy. Default: rgb.')
     parser.add_option('--independent-channels', dest='independent_channels', action='store_true', default=False,
@@ -163,7 +165,7 @@ if __name__ == "__main__":
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
 
-        build_kwargs = dict(min_depth=6, max_depth=16, dx=args.width, dy=args.height, alpha=4e-3)
+        build_kwargs = dict(min_depth=args.min_depth, max_depth=args.max_depth, dx=args.width, dy=args.height, alpha=4e-3)
 
         if args.color_space == 'hsv' and args.independent_channels:
             print(f"Building H/S/V trees for video {i+1}/{n_videos} (seed={video_n})")
