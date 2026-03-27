@@ -121,6 +121,13 @@ RECOMMENDED_CODECS = {
     "gif":  "gif",
 }
 
+# Output pixel formats that preserve alpha, keyed by codec.
+# Codecs not listed here do not support alpha.
+ALPHA_PIX_FMTS = {
+    "libvpx-vp9": "yuva420p",
+    "gif":        "pal8",
+}
+
 if __name__ == "__main__":
     args = parse_cmd_args()
 
@@ -187,6 +194,14 @@ if __name__ == "__main__":
             ["-profile:v", "high", "-coder", "cabac", "-rc_mode", "bitrate"]
             if args.codec == "libopenh264" else []
         )
+        if args.alpha:
+            if args.codec in ALPHA_PIX_FMTS:
+                alpha_args = ["-pix_fmt", ALPHA_PIX_FMTS[args.codec]]
+            else:
+                print(f"Warning: codec '{args.codec}' does not support alpha. Alpha channel will be dropped.")
+                alpha_args = []
+        else:
+            alpha_args = []
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-f", "rawvideo",
@@ -196,6 +211,7 @@ if __name__ == "__main__":
             "-i", "pipe:0",
             "-vcodec", args.codec,
             *openh264_args,
+            *alpha_args,
             *bitrate_args,
             output_path
         ]
