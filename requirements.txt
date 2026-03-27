@@ -2,4 +2,3 @@ markovify
 numpy
 scipy
 Pillow
-numba
