@@ -46,35 +46,40 @@ def eval_tree(tree, steps):
     return func(*args)
 
 
+# _trees layout: [color_tree(s)..., extra_tree(s)...]
+# - color trees: 1 (shared) or 3 (independent H/S/V)
+# - extra trees: K first (CMY mode only), then alpha
+# _n_color tracks how many leading trees are color trees.
 _trees = None
 _color_space = 'rgb'
 _independent_channels = False
-_alpha = None
-_k = 0.0
+_n_color = 1
 
 
 def _compute_chunk(steps):
     if _independent_channels:
-        channels = [eval_tree(t, steps)[..., i:i+1] for i, t in enumerate(_trees)]
+        channels = [eval_tree(_trees[i], steps)[..., i:i+1] for i in range(3)]
         raw = np.concatenate(channels, axis=-1)
     else:
         raw = eval_tree(_trees[0], steps)
 
+    extra = [eval_tree(t, steps)[..., 0:1].clip(0, 1) for t in _trees[_n_color:]]
+
     if _color_space == 'hsv':
-        hsv = np.concatenate([
-            raw[..., 0:1] % 1.0,
-            raw[..., 1:2].clip(0, 1),
-            raw[..., 2:3].clip(0, 1),
+        hsv = np.stack([
+            raw[..., 0] % 1.0,
+            raw[..., 1].clip(0, 1),
+            raw[..., 2].clip(0, 1),
         ], axis=-1)
         frames = hsv_to_rgb(hsv)
     elif _color_space == 'cmy':
-        frames = (1.0 - raw.clip(0, 1)) * (1.0 - _k)
+        k = extra.pop(0) if extra else 0.0
+        frames = (1.0 - raw.clip(0, 1)) * (1.0 - k)
     else:
         frames = raw.clip(0, 1)
 
-    if _alpha is not None:
-        alpha_ch = np.full(frames.shape[:-1] + (1,), _alpha, dtype=np.float32)
-        frames = np.concatenate([frames, alpha_ch], axis=-1)
+    if extra:
+        frames = np.concatenate([frames, extra[0]], axis=-1)
 
     return np.rint(frames * 255.0).astype(np.uint8)
 
@@ -97,10 +102,10 @@ def parse_cmd_args():
                       help='Color space: rgb, hsv, cmy. Default: rgb.')
     parser.add_option('--independent-channels', dest='independent_channels', action='store_true', default=False,
                       help='Build one tree per channel (HSV only: H uses personality_h.json, S/V use personality.json).')
-    parser.add_option('--alpha', dest='alpha', type=float, default=None,
-                      help='Fixed alpha (opacity) channel value in [0, 1]. Adds a 4th channel to the output.')
-    parser.add_option('--k', dest='k', type=float, default=0.0,
-                      help='Fixed K (black) channel value for CMY mode, in [0, 1]. Default: 0.')
+    parser.add_option('--k', dest='k', action='store_true', default=False,
+                      help='Generate K channel from a tree (CMY mode only).')
+    parser.add_option('--alpha', dest='alpha', action='store_true', default=False,
+                      help='Generate alpha channel from a tree.')
     args, _ = parser.parse_args()
     return args
 
@@ -121,6 +126,9 @@ if __name__ == "__main__":
 
     if args.color_space not in ('rgb', 'hsv', 'cmy'):
         raise ValueError(f"Unknown color space '{args.color_space}'. Choose from: rgb, hsv, cmy.")
+    if args.k and args.color_space != 'cmy':
+        print("Warning: --k is only meaningful in cmy mode, ignoring.")
+        args.k = False
 
     recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
     if args.codec is None:
@@ -143,7 +151,7 @@ if __name__ == "__main__":
     all_steps = (np.arange(n_frames) / args.fps).astype(np.float32).reshape(-1, 1, 1, 1)
     chunk_steps = [all_steps[s:s + args.chunk_size] for s in range(0, n_frames, args.chunk_size)]
 
-    pixel_format = "rgba" if args.alpha is not None else "rgb24"
+    pixel_format = "rgba" if args.alpha else "rgb24"
 
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
@@ -152,19 +160,26 @@ if __name__ == "__main__":
 
         if args.color_space == 'hsv' and args.independent_channels:
             print(f"Building H/S/V trees for video {i+1}/{n_videos} (seed={video_n})")
-            _trees = [
-                build_tree(seed=video_n,            weights=p_h, **build_kwargs),
-                build_tree(seed=video_n ^ 0xABCD,   weights=p,   **build_kwargs),
-                build_tree(seed=video_n ^ 0x1234,   weights=p,   **build_kwargs),
+            color_trees = [
+                build_tree(seed=video_n,           weights=p_h, **build_kwargs),
+                build_tree(seed=video_n ^ 0xABCD,  weights=p,   **build_kwargs),
+                build_tree(seed=video_n ^ 0x1234,  weights=p,   **build_kwargs),
             ]
+            _n_color = 3
         else:
             print(f"Building tree for video {i+1}/{n_videos} (seed={video_n})")
-            _trees = [build_tree(seed=video_n, weights=p, **build_kwargs)]
+            color_trees = [build_tree(seed=video_n, weights=p, **build_kwargs)]
+            _n_color = 1
 
+        extra_trees = []
+        if args.k:
+            extra_trees.append(build_tree(seed=video_n ^ 0x5678, weights=p, **build_kwargs))
+        if args.alpha:
+            extra_trees.append(build_tree(seed=video_n ^ 0x9ABC, weights=p, **build_kwargs))
+
+        _trees = color_trees + extra_trees
         _color_space = args.color_space
         _independent_channels = args.independent_channels
-        _alpha = args.alpha
-        _k = args.k
 
         output_path = f"videos/video-{i+start_i}.{args.ext}"
         bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
