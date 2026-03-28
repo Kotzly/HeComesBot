@@ -104,6 +104,28 @@ async function fetchNodePreview(nodeId) {
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
+async function onFlatten() {
+  if (!selectedId) return;
+  const btn = document.getElementById('flatten-btn');
+  btn.disabled = true; btn.textContent = 'Flattening…';
+  try {
+    const res = await fetch('/api/node/flatten', {
+      method: 'POST', headers: jsonHdr(),
+      body: JSON.stringify({tree_id: treeId, node_id: selectedId}),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    treeData        = data.tree;
+    sensitivityData = null;
+    selectedId      = data.new_node_id;
+    const node = findNode(treeData, selectedId);
+    if (node) selectNode(node); else renderTree();
+    updateStats(treeData);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Flatten to Color';
+  }
+}
+
 function _updateReferenceBar() {
   const bar = document.getElementById('reference-toolbar');
   if (referenceId) {
@@ -229,6 +251,7 @@ async function init() {
   document.getElementById('update-node-params-btn').addEventListener('click', onUpdateNodeParams);
   document.getElementById('sensitivity-btn')       .addEventListener('click', onSensitivity);
   document.getElementById('clear-sensitivity-btn') .addEventListener('click', () => { sensitivityData = null; renderTree(); });
+  document.getElementById('flatten-btn')           .addEventListener('click', onFlatten);
   document.getElementById('set-reference-btn')     .addEventListener('click', onSetReference);
   document.getElementById('clear-reference-btn')   .addEventListener('click', onClearReference);
   document.getElementById('prune-btn')             .addEventListener('click', onPrune);

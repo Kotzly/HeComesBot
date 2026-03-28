@@ -475,6 +475,48 @@ def set_node_params():
     return jsonify({"tree": session["tree"]})
 
 
+@app.route("/api/node/flatten", methods=["POST"])
+def flatten_node():
+    data = request.json
+    tree_id = data["tree_id"]
+    node_id = data["node_id"]
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({"error": "unknown tree_id"}), 404
+
+    node = _find_node(session["tree"], node_id)
+    if node is None:
+        return jsonify({"error": "unknown node_id"}), 404
+    if node["arity"] == 0:
+        return jsonify({"error": "node is already a leaf"}), 400
+
+    meta = session["meta"]
+    dx, dy = meta["dx"], meta["dy"]
+    color_space = meta.get("color_space", "rgb")
+    alpha = meta.get("alpha", 4e-3)
+
+    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    raw = _eval_rich(node, steps, session["leaves"])
+    frame = render_frame(raw, color_space, dx, dy)
+    mean_rgb = frame.mean(axis=(0, 1)) / 255.0
+    mean_color = _rgb_to_color_space(mean_rgb, color_space)
+
+    for lid in _collect_leaf_ids(node):
+        session["leaves"].pop(lid, None)
+
+    new_node, new_leaf = _make_rand_color_leaf(mean_color, dx, dy, alpha)
+
+    if session["tree"]["id"] == node_id:
+        session["tree"] = new_node
+    else:
+        parent, idx = _find_parent(session["tree"], node_id)
+        parent["children"][idx] = new_node
+
+    session["leaves"][new_node["id"]] = new_leaf
+    return jsonify({"tree": session["tree"], "new_node_id": new_node["id"]})
+
+
 def _make_rand_color_leaf(mean_color, dx, dy, alpha):
     nid = _new_id()
     params = {"color": [float(mean_color[i]) for i in range(3)]}
