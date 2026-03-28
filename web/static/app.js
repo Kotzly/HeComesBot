@@ -13,7 +13,7 @@ let sensitivityData  = null;
 // ── D3 setup ─────────────────────────────────────────────────────────────────
 const svg   = d3.select('#tree-svg');
 const gRoot = svg.append('g').attr('class', 'root-g');
-const zoom  = d3.zoom().scaleExtent([0.05, 4]).on('zoom', e => gRoot.attr('transform', e.transform));
+const zoom  = d3.zoom().scaleExtent([0.05, 4]).clickDistance(8).on('zoom', e => gRoot.attr('transform', e.transform));
 svg.call(zoom);
 
 // ── Symbol definitions ────────────────────────────────────────────────────────
