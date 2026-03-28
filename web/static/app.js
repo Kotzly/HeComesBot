@@ -41,7 +41,7 @@ function fillFor(node) {
   switch (node.func) {
     case 'rand_color': {
       const c = (node.params || {}).color || [0.5, 0.5, 0.5];
-      return `rgb(${Math.round(c[0]*255)},${Math.round(c[1]*255)},${Math.round(c[2]*255)})`;
+      return colorParamToHex(c);
     }
     case 'circle':
     case 'cone': {
@@ -349,7 +349,7 @@ async function onUpdateLeaf() {
 function collectLeafParams(func) {
   const params = {};
   if (func === 'rand_color') {
-    params.color = hexToRgb(document.getElementById('lp-color').value);
+    params.color = hexToColorParam(document.getElementById('lp-color').value);
     return params;
   }
   const specs = (funcParamsData || {})[func] || [];
@@ -357,7 +357,7 @@ function collectLeafParams(func) {
     if (spec.type === 'float') {
       params[spec.name] = parseFloat(document.getElementById(`lp-${spec.name}`).value);
     } else if (spec.type === 'color') {
-      params[spec.name] = hexToRgb(document.getElementById(`lp-${spec.name}`).value);
+      params[spec.name] = hexToColorParam(document.getElementById(`lp-${spec.name}`).value);
     }
   });
   return params;
@@ -587,12 +587,12 @@ function makeSliderRow(label, id, min, max, step, value) {
   return wrap;
 }
 
-function makeColorRow(label, id, rgb) {
+function makeColorRow(label, id, colorParam) {
   const wrap  = document.createElement('label');
   wrap.textContent = label;
   const input = document.createElement('input');
   input.type = 'color'; input.id = id;
-  input.value = rgbToHex(rgb[0], rgb[1], rgb[2]);
+  input.value = colorParamToHex(colorParam);
   input.style.cssText = 'width:100%;height:32px;cursor:pointer';
   wrap.appendChild(input);
   return wrap;
@@ -646,6 +646,52 @@ function hexToRgb(hex) {
 function rgbToHex(r, g, b) {
   const h = v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
   return `#${h(r)}${h(g)}${h(b)}`;
+}
+
+function hsvToRgb(h, s, v) {
+  const i = Math.floor(h * 6);
+  const f = h * 6 - i;
+  const p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s);
+  switch (i % 6) {
+    case 0: return [v, t, p]; case 1: return [q, v, p]; case 2: return [p, v, t];
+    case 3: return [p, q, v]; case 4: return [t, p, v]; case 5: return [v, p, q];
+  }
+}
+
+function rgbToHsv(r, g, b) {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  const s = max === 0 ? 0 : d / max, v = max;
+  let h = 0;
+  if (d !== 0) {
+    if      (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else                h = ((r - g) / d + 4) / 6;
+  }
+  return [h, s, v];
+}
+
+function getColorSpace() {
+  return (document.getElementById('color-space-select') || {}).value || 'rgb';
+}
+
+// Stored color param → hex for the color picker
+function colorParamToHex(c) {
+  const cs = getColorSpace();
+  if (cs === 'hsv') {
+    const [r, g, b] = hsvToRgb(((c[0] % 1) + 1) % 1, Math.min(1, Math.max(0, c[1])), Math.min(1, Math.max(0, c[2])));
+    return rgbToHex(r, g, b);
+  }
+  if (cs === 'cmy') return rgbToHex(1 - c[0], 1 - c[1], 1 - c[2]);
+  return rgbToHex(c[0], c[1], c[2]);
+}
+
+// Hex from color picker → stored color param
+function hexToColorParam(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  const cs = getColorSpace();
+  if (cs === 'hsv') return rgbToHsv(r, g, b);
+  if (cs === 'cmy') return [1 - r, 1 - g, 1 - b];
+  return [r, g, b];
 }
 
 init();
