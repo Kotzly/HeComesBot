@@ -11,8 +11,10 @@ dependencies = [
     "scipy",
     "Pillow",
     "flask",
-    "markovify",
 ]
+
+[project.optional-dependencies]
+bot = ["markovify"]
 
 [project.scripts]
 hecomes-image = "hecomes.cli.image:main"
