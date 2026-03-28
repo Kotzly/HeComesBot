@@ -99,16 +99,52 @@ async function fetchNodePreview(nodeId) {
   }
 }
 
+// ── Pruning ───────────────────────────────────────────────────────────────────
+
+async function onPrune() {
+  if (!selectedId) return;
+  const btn = document.getElementById('prune-btn');
+  const result = document.getElementById('prune-result');
+  btn.disabled = true; btn.textContent = 'Pruning…';
+  result.textContent = '';
+  try {
+    const res = await fetch('/api/prune', {
+      method: 'POST', headers: jsonHdr(),
+      body: JSON.stringify({
+        tree_id:   treeId,
+        node_id:   selectedId,
+        method:    document.getElementById('prune-method-select').value,
+        delta:     parseFloat(document.getElementById('prune-delta').value),
+        threshold: parseFloat(document.getElementById('prune-threshold').value),
+      }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    treeData = data.tree;
+    result.textContent = `Pruned ${data.pruned} node${data.pruned !== 1 ? 's' : ''}.`;
+    const node = findNode(treeData, selectedId);
+    if (node) selectNode(node); else renderTree();
+    updateStats(treeData);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Prune';
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
-  const [funcsRes, persRes, fparamsRes] = await Promise.all([
+  const [funcsRes, persRes, fparamsRes, pruneMethodsRes] = await Promise.all([
     fetch('/api/functions'),
     fetch('/api/personalities'),
     fetch('/api/function-params'),
+    fetch('/api/prune-methods'),
   ]);
   functionsData  = await funcsRes.json();
   funcParamsData = await fparamsRes.json();
   const personalities = await persRes.json();
+  const pruneMethods  = await pruneMethodsRes.json();
+
+  const pmSel = document.getElementById('prune-method-select');
+  pruneMethods.forEach(m => pmSel.appendChild(new Option(m, m)));
 
   const pSel = document.getElementById('personality-select');
   personalities.forEach(p => pSel.appendChild(new Option(p, p)));
@@ -138,6 +174,7 @@ async function init() {
   document.getElementById('regen-btn')             .addEventListener('click', onRegen);
   document.getElementById('update-leaf-btn')       .addEventListener('click', onUpdateLeaf);
   document.getElementById('update-node-params-btn').addEventListener('click', onUpdateNodeParams);
+  document.getElementById('prune-btn')             .addEventListener('click', onPrune);
   document.getElementById('random-seed-btn')  .addEventListener('click', () => {
     document.getElementById('seed-input').value = randInt();
   });
@@ -441,13 +478,17 @@ function selectNode(nodeData) {
 
   const leafEditor       = document.getElementById('leaf-editor');
   const nodeParamsEditor = document.getElementById('node-params-editor');
+  const pruneEditor      = document.getElementById('prune-editor');
 
   if (nodeData.arity === 0) {
     leafEditor.classList.remove('hidden');
     buildLeafEditor(nodeData);
     nodeParamsEditor.classList.add('hidden');
+    pruneEditor.classList.add('hidden');
   } else {
     leafEditor.classList.add('hidden');
+    pruneEditor.classList.remove('hidden');
+    document.getElementById('prune-result').textContent = '';
     const specs = (funcParamsData || {})[nodeData.func];
     if (specs && specs.length) {
       nodeParamsEditor.classList.remove('hidden');

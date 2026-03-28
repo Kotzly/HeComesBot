@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from PIL import Image
 
 from hecomes.artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
+from hecomes.artgen.pruning import PRUNE_METHODS
 from hecomes.artgen.render import COLOR_SPACES, render_frame
 from hecomes.artgen.tree import get_random_function, random_delta
 from hecomes.config import DATA_DIR, load_personality_list
@@ -471,6 +472,108 @@ def set_node_params():
 
     node["params"] = {**node.get("params", {}), **new_params}
     return jsonify({"tree": session["tree"]})
+
+
+def _make_rand_color_leaf(mean_color, dx, dy, alpha):
+    nid = _new_id()
+    params = {"color": [float(mean_color[i]) for i in range(3)]}
+    _, rand_color_fn = FUNC_BY_NAME["rand_color"]
+    base = rand_color_fn(dx=dx, dy=dy, **params).astype(np.float32)
+    delta = np.float32(alpha)
+    node = {
+        "id": nid, "func": "rand_color", "arity": 0,
+        "children": [], "delta": float(delta), "params": params,
+    }
+    leaf_data = {"base": base, "delta": delta, "func": "rand_color", "params": params}
+    return node, leaf_data
+
+
+def _collect_leaf_parents(node, result):
+    """Collect nodes that have at least one leaf child, in post-order (bottom-up)."""
+    for child in node.get("children", []):
+        if child["arity"] > 0:
+            _collect_leaf_parents(child, result)
+    if any(c["arity"] == 0 for c in node.get("children", [])):
+        result.append(node)
+
+
+def _prune_pass(subtree_root, leaves, dx, dy, color_space, method_fn, delta, threshold, alpha):
+    """One bottom-up pruning pass. Returns number of nodes pruned."""
+    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+
+    original_raw = _eval_rich(subtree_root, steps, leaves)
+    original_frame = render_frame(original_raw, color_space, dx, dy)
+
+    leaf_parents = []
+    _collect_leaf_parents(subtree_root, leaf_parents)
+
+    n_pruned = 0
+    for parent in leaf_parents:
+        for i, child in enumerate(parent["children"]):
+            if child["arity"] != 0:
+                continue
+
+            leaf = leaves[child["id"]]
+            original_base = leaf["base"]
+            leaf["base"] = original_base + np.float32(delta)
+
+            perturbed_raw = _eval_rich(subtree_root, steps, leaves)
+            perturbed_frame = render_frame(perturbed_raw, color_space, dx, dy)
+
+            leaf["base"] = original_base
+
+            if method_fn(original_frame, perturbed_frame, threshold=threshold):
+                mean_color = original_base.mean(axis=(0, 1))
+                new_node, new_leaf_data = _make_rand_color_leaf(mean_color, dx, dy, alpha)
+                leaves.pop(child["id"])
+                parent["children"][i] = new_node
+                leaves[new_node["id"]] = new_leaf_data
+                n_pruned += 1
+
+    return n_pruned
+
+
+@app.route("/api/prune-methods")
+def get_prune_methods():
+    return jsonify(list(PRUNE_METHODS.keys()))
+
+
+@app.route("/api/prune", methods=["POST"])
+def prune():
+    data = request.json
+    tree_id = data["tree_id"]
+    node_id = data["node_id"]
+    method_name = data.get("method", "entropy_sensitivity")
+    delta = float(data.get("delta", 0.05))
+    threshold = float(data.get("threshold", 0.1))
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({"error": "unknown tree_id"}), 404
+
+    node = _find_node(session["tree"], node_id)
+    if node is None:
+        return jsonify({"error": "unknown node_id"}), 404
+    if node["arity"] == 0:
+        return jsonify({"error": "cannot prune a leaf node"}), 400
+
+    method_fn = PRUNE_METHODS.get(method_name)
+    if method_fn is None:
+        return jsonify({"error": f"unknown prune method: {method_name}"}), 400
+
+    meta = session["meta"]
+    dx, dy = meta["dx"], meta["dy"]
+    color_space = meta.get("color_space", "rgb")
+    alpha = meta.get("alpha", 4e-3)
+
+    total_pruned = 0
+    while True:
+        n = _prune_pass(node, session["leaves"], dx, dy, color_space, method_fn, delta, threshold, alpha)
+        total_pruned += n
+        if n == 0:
+            break
+
+    return jsonify({"tree": session["tree"], "pruned": total_pruned})
 
 
 def main():
