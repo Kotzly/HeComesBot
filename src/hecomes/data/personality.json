@@ -3,8 +3,8 @@
         "rand_color": 1,
         "x_var": 1,
         "y_var": 1,
-        "circle": 0,
-        "cone": 0
+        "circle": 0.2,
+        "cone": 0.2
     },
     "1": {
         "cos": 1,
@@ -24,7 +24,11 @@
         "safe_divide": 1,
         "safe_modulus": 0,
         "saddle": 0,
-        "swap_phase_amplitude": 0
+        "swap_phase_amplitude": 0,
+        "circular_mean": 0,
+        "circular_mean_far": 0,
+        "hue_diff": 0,
+        "hue_rotate": 0
     }
 }
 

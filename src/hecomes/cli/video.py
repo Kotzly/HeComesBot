@@ -6,6 +6,7 @@ import subprocess
 import numpy as np
 from numpy.random import rand
 
+from hecomes.artgen.func_utils import hsv_to_rgb
 from hecomes.artgen.functions import generate_params
 from hecomes.artgen.tree import get_random_function, random_delta
 from hecomes.config import DATA_DIR, load_personality_list
@@ -21,7 +22,19 @@ RECOMMENDED_CODECS = {
     "gif": "gif",
 }
 
-_tree = None
+# Output pixel formats that preserve alpha, keyed by codec.
+ALPHA_PIX_FMTS = {
+    "libvpx-vp9": "yuva420p",
+    "gif": "pal8",
+}
+
+# _trees layout: [color_tree(s)..., extra_tree(s)...]
+# - color trees: 1 (shared) or 3 (independent H/S/V)
+# - extra trees: K first (CMY mode only), then alpha
+_trees = None
+_color_space = "rgb"
+_independent_channels = False
+_n_color = 1
 
 
 def build_tree(
@@ -60,8 +73,30 @@ def eval_tree(tree, steps):
 
 
 def _compute_chunk(steps):
-    frames = eval_tree(_tree, steps)
-    return np.rint(frames.clip(0.0, 1.0) * 255.0).astype(np.uint8)
+    if _independent_channels:
+        channels = [eval_tree(_trees[i], steps)[..., i : i + 1] for i in range(3)]
+        raw = np.concatenate(channels, axis=-1)
+    else:
+        raw = eval_tree(_trees[0], steps)
+
+    extra = [eval_tree(t, steps)[..., 0:1].clip(0, 1) for t in _trees[_n_color:]]
+
+    if _color_space == "hsv":
+        hsv = np.stack(
+            [raw[..., 0] % 1.0, raw[..., 1].clip(0, 1), raw[..., 2].clip(0, 1)],
+            axis=-1,
+        )
+        frames = hsv_to_rgb(hsv)
+    elif _color_space == "cmy":
+        k = extra.pop(0) if extra else 0.0
+        frames = (1.0 - raw.clip(0, 1)) * (1.0 - k)
+    else:
+        frames = raw.clip(0, 1)
+
+    if extra:
+        frames = np.concatenate([frames, extra[0]], axis=-1)
+
+    return np.rint(frames * 255.0).astype(np.uint8)
 
 
 def _parse_args():
@@ -90,6 +125,19 @@ def _parse_args():
                       help="Frames per batch. Default: 10.")
     parser.add_option("-p", "--processes", dest="n_process", type=int, default=3,
                       help="Number of parallel workers. Default: 3.")
+    parser.add_option("--min-depth", dest="min_depth", type=int, default=6,
+                      help="Minimum tree depth. Default: 6.")
+    parser.add_option("--max-depth", dest="max_depth", type=int, default=16,
+                      help="Maximum tree depth. Default: 16.")
+    parser.add_option("--color-space", dest="color_space", type=str, default="rgb",
+                      help="Color space: rgb, hsv, cmy. Default: rgb.")
+    parser.add_option("--independent-channels", dest="independent_channels",
+                      action="store_true", default=False,
+                      help="Build one tree per channel (HSV: H uses personality_h.json, S/V use personality.json).")
+    parser.add_option("--k", dest="k", action="store_true", default=False,
+                      help="Generate K channel from a tree (CMY mode only).")
+    parser.add_option("--alpha", dest="alpha", action="store_true", default=False,
+                      help="Generate alpha channel from a tree.")
     parser.add_option("--personality", dest="personality", type=str, default=None,
                       help="Personality JSON filename in data/. Default: personality.json.")
     args, _ = parser.parse_args()
@@ -97,16 +145,23 @@ def _parse_args():
 
 
 def main():
-    global _tree
+    global _trees, _color_space, _independent_channels, _n_color
 
     ffmpeg_bin = os.getenv("FFMPEG_BIN")
-    if ffmpeg_bin and not (ffmpeg_bin + os.pathsep) in os.environ["PATH"]:
+    if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ["PATH"]:
         os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
 
     args = _parse_args()
 
+    if args.color_space not in ("rgb", "hsv", "cmy"):
+        raise ValueError(f"Unknown color space '{args.color_space}'. Choose from: rgb, hsv, cmy.")
+    if args.k and args.color_space != "cmy":
+        print("Warning: --k is only meaningful in cmy mode, ignoring.")
+        args.k = False
+
     personality_file = args.personality or "personality.json"
     p = load_personality_list(DATA_DIR / personality_file)
+    p_h = load_personality_list(DATA_DIR / "personality_h.json")
 
     recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
     if args.codec is None:
@@ -132,19 +187,41 @@ def main():
         all_steps[s : s + args.chunk_size] for s in range(0, n_frames, args.chunk_size)
     ]
 
+    pixel_format = "rgba" if args.alpha else "rgb24"
+
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
 
-        print(f"Building tree for video {i+1}/{n_videos} (seed={video_n})")
-        _tree = build_tree(
-            min_depth=6,
-            max_depth=16,
-            seed=video_n,
-            weights=p,
+        build_kwargs = dict(
+            min_depth=args.min_depth,
+            max_depth=args.max_depth,
             dx=args.width,
             dy=args.height,
             alpha=4e-3,
         )
+
+        if args.color_space == "hsv" and args.independent_channels:
+            print(f"Building H/S/V trees for video {i+1}/{n_videos} (seed={video_n})")
+            color_trees = [
+                build_tree(seed=video_n,          weights=p_h, **build_kwargs),
+                build_tree(seed=video_n ^ 0xABCD, weights=p,   **build_kwargs),
+                build_tree(seed=video_n ^ 0x1234, weights=p,   **build_kwargs),
+            ]
+            _n_color = 3
+        else:
+            print(f"Building tree for video {i+1}/{n_videos} (seed={video_n})")
+            color_trees = [build_tree(seed=video_n, weights=p, **build_kwargs)]
+            _n_color = 1
+
+        extra_trees = []
+        if args.k:
+            extra_trees.append(build_tree(seed=video_n ^ 0x5678, weights=p, **build_kwargs))
+        if args.alpha:
+            extra_trees.append(build_tree(seed=video_n ^ 0x9ABC, weights=p, **build_kwargs))
+
+        _trees = color_trees + extra_trees
+        _color_space = args.color_space
+        _independent_channels = args.independent_channels
 
         output_path = f"videos/video-{i+start_i}.{args.ext}"
         bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
@@ -153,13 +230,31 @@ def main():
             if args.codec == "libopenh264"
             else []
         )
+        if args.alpha:
+            if args.codec in ALPHA_PIX_FMTS:
+                alpha_args = ["-pix_fmt", ALPHA_PIX_FMTS[args.codec]]
+            else:
+                print(f"Warning: codec '{args.codec}' does not support alpha. Alpha channel will be dropped.")
+                alpha_args = []
+        else:
+            alpha_args = []
         ffmpeg_cmd = [
-            "ffmpeg", "-y", "-f", "rawvideo", "-pixel_format", "rgb24",
-            "-video_size", f"{args.width}x{args.height}",
-            "-framerate", str(args.fps),
-            "-i", "pipe:0",
-            "-vcodec", args.codec,
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            pixel_format,
+            "-video_size",
+            f"{args.width}x{args.height}",
+            "-framerate",
+            str(args.fps),
+            "-i",
+            "pipe:0",
+            "-vcodec",
+            args.codec,
             *openh264_args,
+            *alpha_args,
             *bitrate_args,
             output_path,
         ]

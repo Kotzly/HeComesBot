@@ -13,8 +13,12 @@ from hecomes.artgen.func_defs import (
     absolute_value,
     blur,
     circle,
+    circular_mean,
+    circular_mean_far,
     color_rotate,
     cone,
+    hue_diff,
+    hue_rotate,
     kaleidoscope,
     mirrored_sigmoid,
     rand_color,
@@ -190,6 +194,11 @@ FUNCTION_REGISTRY = [
     FunctionDef(safe_modulus, 2),
     FunctionDef(saddle, 2),
     FunctionDef(swap_phase_amplitude, 2),
+    # Circular hue functions (intended for HSV H-channel / independent-channels mode)
+    FunctionDef(circular_mean, 2),
+    FunctionDef(circular_mean_far, 2),
+    FunctionDef(hue_diff, 2),
+    FunctionDef(hue_rotate, 2),
 ]
 
 
