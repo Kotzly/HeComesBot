@@ -356,20 +356,16 @@ function collectLeafParams(func) {
   const params = {};
   if (func === 'rand_color') {
     params.color = hexToRgb(document.getElementById('lp-color').value);
-  } else if (func === 'cone') {
-    params.cx = parseFloat(document.getElementById('lp-cx').value);
-    params.cy = parseFloat(document.getElementById('lp-cy').value);
-    params.rx = parseFloat(document.getElementById('lp-rx').value);
-    params.ry = parseFloat(document.getElementById('lp-ry').value);
-  } else if (func === 'circle') {
-    params.cx    = parseFloat(document.getElementById('lp-cx').value);
-    params.cy    = parseFloat(document.getElementById('lp-cy').value);
-    params.rx    = parseFloat(document.getElementById('lp-rx').value);
-    params.ry    = parseFloat(document.getElementById('lp-ry').value);
-    params.color = hexToRgb(document.getElementById('lp-color').value);
-  } else if (func === 'x_var' || func === 'y_var') {
-    params.angle = parseFloat(document.getElementById('lp-angle').value);
+    return params;
   }
+  const specs = (funcParamsData || {})[func] || [];
+  specs.forEach(spec => {
+    if (spec.type === 'float') {
+      params[spec.name] = parseFloat(document.getElementById(`lp-${spec.name}`).value);
+    } else if (spec.type === 'color') {
+      params[spec.name] = hexToRgb(document.getElementById(`lp-${spec.name}`).value);
+    }
+  });
   return params;
 }
 
@@ -486,23 +482,19 @@ function buildLeafEditor(node) {
   document.getElementById('delta-slider').value = delta;
   document.getElementById('delta-num').value    = delta.toFixed(4);
 
-  const p = node.params || {};
+  const p     = node.params || {};
+  const specs = (funcParamsData || {})[node.func];
 
   if (node.func === 'rand_color') {
     controls.appendChild(makeColorRow('Color', 'lp-color', p.color || [0.5, 0.5, 0.5]));
-  } else if (node.func === 'circle') {
-    controls.appendChild(makeSliderRow('Center X', 'lp-cx', -2, 2,    0.01, p.cx ?? 0));
-    controls.appendChild(makeSliderRow('Center Y', 'lp-cy', -2, 2,    0.01, p.cy ?? 0));
-    controls.appendChild(makeSliderRow('Radius X', 'lp-rx', 0.01, 1,  0.01, p.rx ?? 0.5));
-    controls.appendChild(makeSliderRow('Radius Y', 'lp-ry', 0.01, 1,  0.01, p.ry ?? 0.5));
-    controls.appendChild(makeColorRow('Color', 'lp-color', p.color || [0.5, 0.5, 0.5]));
-  } else if (node.func === 'cone') {
-    controls.appendChild(makeSliderRow('Center X', 'lp-cx', -2, 2,    0.01, p.cx ?? 0));
-    controls.appendChild(makeSliderRow('Center Y', 'lp-cy', -2, 2,    0.01, p.cy ?? 0));
-    controls.appendChild(makeSliderRow('Radius X', 'lp-rx', 0.01, 1,  0.01, p.rx ?? 0.5));
-    controls.appendChild(makeSliderRow('Radius Y', 'lp-ry', 0.01, 1,  0.01, p.ry ?? 0.5));
-  } else if (node.func === 'x_var' || node.func === 'y_var') {
-    controls.appendChild(makeSliderRow('Angle', 'lp-angle', 0, 6.2832, 0.01, p.angle ?? 0));
+  } else if (specs && specs.length) {
+    specs.forEach(spec => {
+      if (spec.type === 'float') {
+        controls.appendChild(makeSliderRow(spec.label, `lp-${spec.name}`, spec.min, spec.max, 0.01, p[spec.name] ?? spec.min ?? 0));
+      } else if (spec.type === 'color') {
+        controls.appendChild(makeColorRow(spec.label, `lp-${spec.name}`, p[spec.name] || [0.5, 0.5, 0.5]));
+      }
+    });
   } else {
     const msg = document.createElement('div');
     msg.className = 'muted';

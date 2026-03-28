@@ -37,16 +37,21 @@ def random_radius(ellipsoid=True):
     radius = 1 - np.random.rand(size)**2
     return radius
 
-def cone(dx=None, dy=None, _ellipsoid=True):
-    cx, cy = random_point()
+def cone(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None):
+    if cx is None or cy is None:
+        cx, cy = random_point()
+    if rx is None or ry is None:
+        rx, ry = random_radius()
     x, y = linear_mesh(dx=dx, dy=dy)
-    rx, ry = random_radius()
     gradient = np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2).reshape(dy, dx, 1).astype(np.float32)
     return np.broadcast_to(gradient, (dy, dx, 3)).copy()
 
-def circle(ellipsoid=True, dx=None, dy=None):
-    base = cone(dx, dy, ellipsoid)                          # (dy, dx, 3), all channels equal
-    color = np.random.rand(3).astype(np.float32)
+def circle(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
+    base = cone(dx=dx, dy=dy, cx=cx, cy=cy, rx=rx, ry=ry)  # (dy, dx, 3), all channels equal
+    if color is None:
+        color = np.random.rand(3).astype(np.float32)
+    else:
+        color = np.asarray(color, dtype=np.float32)
     circ = np.ones((dy, dx, 3), dtype=np.float32) * color.reshape(1, 1, 3)
     circ[base > 1] = 0
     return circ
@@ -171,6 +176,15 @@ def generate_params(func_name):
     """Generate random params for functions that use internal randomness."""
     if func_name in ('x_var', 'y_var'):
         return {'angle': float(np.random.rand() * 2 * np.pi)}
+    if func_name == 'cone':
+        cx, cy = random_point()
+        rx, ry = random_radius()
+        return {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry)}
+    if func_name == 'circle':
+        cx, cy = random_point()
+        rx, ry = random_radius()
+        color = np.random.rand(3).tolist()
+        return {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry), 'color': color}
     if func_name == 'color_rotate':
         return {'angles': (np.random.rand(3) * 2 * np.pi).tolist()}
     if func_name == 'kaleidoscope':
@@ -184,6 +198,19 @@ def generate_params(func_name):
 
 # Param specs for the web UI: maps func_name -> list of param descriptors
 FUNC_PARAMS = {
+    'cone': [
+        {'name': 'cx', 'type': 'float', 'min': -2.0, 'max': 2.0,  'label': 'Center X'},
+        {'name': 'cy', 'type': 'float', 'min': -2.0, 'max': 2.0,  'label': 'Center Y'},
+        {'name': 'rx', 'type': 'float', 'min': 0.01, 'max': 1.0,  'label': 'Radius X'},
+        {'name': 'ry', 'type': 'float', 'min': 0.01, 'max': 1.0,  'label': 'Radius Y'},
+    ],
+    'circle': [
+        {'name': 'cx',    'type': 'float', 'min': -2.0, 'max': 2.0, 'label': 'Center X'},
+        {'name': 'cy',    'type': 'float', 'min': -2.0, 'max': 2.0, 'label': 'Center Y'},
+        {'name': 'rx',    'type': 'float', 'min': 0.01, 'max': 1.0, 'label': 'Radius X'},
+        {'name': 'ry',    'type': 'float', 'min': 0.01, 'max': 1.0, 'label': 'Radius Y'},
+        {'name': 'color', 'type': 'color',                          'label': 'Color'},
+    ],
     'x_var': [
         {'name': 'angle', 'type': 'float', 'min': 0.0, 'max': 6.2832, 'label': 'Angle'},
     ],

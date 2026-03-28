@@ -7,7 +7,7 @@ import os
 from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image
 
-from functions import BUILD_FUNCTIONS, linear_mesh, hsv_to_rgb, generate_params, FUNC_PARAMS
+from functions import BUILD_FUNCTIONS, hsv_to_rgb, generate_params, FUNC_PARAMS
 from build import get_random_function
 from config import load_personality_list
 from video import random_delta
@@ -45,50 +45,15 @@ for _arity in FUNCS_BY_ARITY:
     FUNCS_BY_ARITY[_arity].sort()
 
 
-# ── Leaf geometry helpers ─────────────────────────────────────────────────────
-
-def _random_point():
-    return (1 - np.random.rand(2) ** 2) * 4 - 2
-
-
-def _random_radius():
-    return np.maximum(1 - np.random.rand(2) ** 2, 0.01)
-
-
-def _cone_array(cx, cy, rx, ry, dx, dy):
-    x, y = linear_mesh(dx=dx, dy=dy)
-    gradient = np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2).reshape(dy, dx, 1).astype(np.float32)
-    return np.broadcast_to(gradient, (dy, dx, 3)).copy()
-
-
-def _circle_array(cx, cy, rx, ry, color, dx, dy):
-    base = _cone_array(cx, cy, rx, ry, dx, dy)  # (dy, dx, 3), all channels equal
-    circ = np.ones((dy, dx, 3), dtype=np.float32) * np.array(color, dtype=np.float32).reshape(1, 1, 3)
-    circ[base > 1] = 0
-    return circ
-
-
 def _build_leaf(func, dx, dy, alpha):
-    """Build a leaf array and capture editable params where possible."""
+    """Build a leaf array and capture editable params."""
     fname = func.__name__
     if fname == 'rand_color':
         color = np.random.rand(3).astype(np.float32)
         base = np.broadcast_to(color.reshape(1, 1, 3), (dy, dx, 3)).copy()
         params = {'color': color.tolist()}
-    elif fname == 'cone':
-        cx, cy = _random_point()
-        rx, ry = _random_radius()
-        base = _cone_array(cx, cy, rx, ry, dx, dy)
-        params = {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry)}
-    elif fname == 'circle':
-        cx, cy = _random_point()
-        rx, ry = _random_radius()
-        color = np.random.rand(3).astype(np.float32)
-        base = _circle_array(cx, cy, rx, ry, color, dx, dy)
-        params = {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry),
-                  'color': color.tolist()}
     else:
-        params = generate_params(func.__name__)
+        params = generate_params(fname)
         base = func(dx=dx, dy=dy, **params).astype(np.float32)
     delta = np.float32(random_delta(alpha))
     return base, delta, params
@@ -100,15 +65,8 @@ def _recompute_leaf(func_name, params, dx, dy):
         return np.broadcast_to(
             np.array(params['color'], dtype=np.float32).reshape(1, 1, 3), (dy, dx, 3)
         ).copy()
-    if func_name == 'cone':
-        return _cone_array(params['cx'], params['cy'], params['rx'], params['ry'], dx, dy)
-    if func_name == 'circle':
-        return _circle_array(params['cx'], params['cy'], params['rx'], params['ry'],
-                             params['color'], dx, dy)
-    if func_name in ('x_var', 'y_var'):
-        _, f = FUNC_BY_NAME[func_name]
-        return f(dx=dx, dy=dy, angle=params['angle']).astype(np.float32)
-    return None
+    _, f = FUNC_BY_NAME[func_name]
+    return f(dx=dx, dy=dy, **params).astype(np.float32)
 
 
 # ── Tree helpers ──────────────────────────────────────────────────────────────
