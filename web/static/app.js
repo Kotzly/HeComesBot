@@ -44,15 +44,12 @@ function fillFor(node) {
       return colorParamToHex(c);
     }
     case 'circle':
-    case 'cone': {
-      const p = node.params || {};
-      const dist = Math.sqrt((p.cx || 0) ** 2 + (p.cy || 0) ** 2);
-      const g    = Math.round((0.85 - 0.5 * Math.min(dist / 2.83, 1)) * 255);
-      return `rgb(${g},${g},${g})`;
-    }
+    case 'cone':
     case 'x_var':
-    case 'y_var':
-      return '#c792ea';
+    case 'y_var': {
+      const c = (node.params || {}).color;
+      return c ? colorParamToHex(c) : '#c792ea';
+    }
     default:
       return '#4ec9b0';
   }
