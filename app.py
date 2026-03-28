@@ -37,13 +37,14 @@ def _random_radius():
 
 def _cone_array(cx, cy, rx, ry, dx, dy):
     x, y = linear_mesh(dx=dx, dy=dy)
-    return np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2).reshape(dy, dx, 1).astype(np.float32)
+    gradient = np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2).reshape(dy, dx, 1).astype(np.float32)
+    return np.broadcast_to(gradient, (dy, dx, 3)).copy()
 
 
 def _circle_array(cx, cy, rx, ry, color, dx, dy):
-    cone = _cone_array(cx, cy, rx, ry, dx, dy).squeeze()
+    base = _cone_array(cx, cy, rx, ry, dx, dy)  # (dy, dx, 3), all channels equal
     circ = np.ones((dy, dx, 3), dtype=np.float32) * np.array(color, dtype=np.float32).reshape(1, 1, 3)
-    circ[cone > 1] = 0
+    circ[base > 1] = 0
     return circ
 
 
@@ -52,7 +53,7 @@ def _build_leaf(func, dx, dy, alpha):
     fname = func.__name__
     if fname == 'rand_color':
         color = np.random.rand(3).astype(np.float32)
-        base = color.reshape(1, 1, 3)
+        base = np.broadcast_to(color.reshape(1, 1, 3), (dy, dx, 3)).copy()
         params = {'color': color.tolist()}
     elif fname == 'cone':
         cx, cy = _random_point()
@@ -76,7 +77,9 @@ def _build_leaf(func, dx, dy, alpha):
 def _recompute_leaf(func_name, params, dx, dy):
     """Recompute leaf base array from stored params."""
     if func_name == 'rand_color':
-        return np.array(params['color'], dtype=np.float32).reshape(1, 1, 3)
+        return np.broadcast_to(
+            np.array(params['color'], dtype=np.float32).reshape(1, 1, 3), (dy, dx, 3)
+        ).copy()
     if func_name == 'cone':
         return _cone_array(params['cx'], params['cy'], params['rx'], params['ry'], dx, dy)
     if func_name == 'circle':

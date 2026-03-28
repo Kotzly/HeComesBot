@@ -6,15 +6,16 @@ from scipy.spatial.transform import Rotation as R
 # Adaptor functions for the recursive generator
 # Note: using python's random module because numpy's doesn't handle seeds longer than 32 bits.
 def rand_color(dx=None, dy=None):
-    return np.random.rand(1, 1, 3)
+    color = np.random.rand(1, 1, 3).astype(np.float32)
+    return np.broadcast_to(color, (dy, dx, 3)).copy()
 
 def x_var(dx=None, dy=None):
-    x_array = np.linspace(0., 1., dx).reshape(1, -1, 1)
-    return x_array
+    x = np.linspace(0., 1., dx, dtype=np.float32).reshape(1, dx, 1)
+    return np.broadcast_to(x, (dy, dx, 3)).copy()
 
 def y_var(dx=None, dy=None):
-    y_array = np.linspace(0., 1., dy).reshape(-1, 1, 1)
-    return y_array
+    y = np.linspace(0., 1., dy, dtype=np.float32).reshape(dy, 1, 1)
+    return np.broadcast_to(y, (dy, dx, 3)).copy()
 
 def linear_mesh(dx=None, dy=None):
     y = np.repeat(np.linspace(-1, 1, dy).reshape(-1, 1), dx, axis=1)
@@ -29,16 +30,17 @@ def random_radius(ellipsoid=True):
     radius = 1 - np.random.rand(size)**2
     return radius
 
-def cone(dx=None, dy=None, ellipsoid=True):
+def cone(dx=None, dy=None, _ellipsoid=True):
     cx, cy = random_point()
     x, y = linear_mesh(dx=dx, dy=dy)
     rx, ry = random_radius()
-    ellipsoid = np.sqrt(((x - cx)/ rx) ** 2 + ((y - cy)/ ry)**2).reshape(dy, dx, 1)
-    return ellipsoid
+    gradient = np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2).reshape(dy, dx, 1).astype(np.float32)
+    return np.broadcast_to(gradient, (dy, dx, 3)).copy()
 
 def circle(ellipsoid=True, dx=None, dy=None):
-    base = cone(dx, dy, ellipsoid).squeeze()
-    circ = np.ones((dy, dx, 3)) * rand_color()
+    base = cone(dx, dy, ellipsoid)                          # (dy, dx, 3), all channels equal
+    color = np.random.rand(3).astype(np.float32)
+    circ = np.ones((dy, dx, 3), dtype=np.float32) * color.reshape(1, 1, 3)
     circ[base > 1] = 0
     return circ
 
