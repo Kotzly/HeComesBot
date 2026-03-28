@@ -16,9 +16,6 @@ def _rotated_gradient(dx, dy, angle=None):
     color = np.random.rand(3).astype(np.float32)
     x, y  = linear_mesh(dx=dx, dy=dy)
     grad  = np.cos(angle) * x + np.sin(angle) * y          # (dy, dx), range subset of [-2, 2]
-    g_min, g_max = grad.min(), grad.max()
-    if g_max > g_min:
-        grad = (grad - g_min) / (g_max - g_min)            # normalize to [0, 1]
     return (grad[:, :, np.newaxis] * color.reshape(1, 1, 3)).astype(np.float32)
 
 def x_var(dx=None, dy=None):
@@ -117,6 +114,21 @@ def swap_phase_amplitude(a, b, axes=[1, 2]):
 
 def get_radius(x, y):
     return np.sqrt(x**2 + y**2)
+
+def hsv_to_rgb(hsv):
+    """Convert (H, S, V) image array in [0,1] to RGB. Input shape: (..., 3)."""
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    i = (h * 6).astype(np.int32)
+    f = h * 6 - i
+    p = v * (1 - s)
+    q = v * (1 - f * s)
+    t = v * (1 - (1 - f) * s)
+    i6 = i % 6
+    r = np.select([i6==0, i6==1, i6==2, i6==3, i6==4, i6==5], [v, q, p, p, t, v])
+    g = np.select([i6==0, i6==1, i6==2, i6==3, i6==4, i6==5], [t, v, v, q, p, p])
+    b = np.select([i6==0, i6==1, i6==2, i6==3, i6==4, i6==5], [p, p, t, v, v, q])
+    return np.stack([r, g, b], axis=-1).astype(np.float32)
+
 
 def is_valid_shape(image):
     if image.ndim != 3:
