@@ -644,10 +644,19 @@ def sensitivity():
     dx, dy = meta["dx"], meta["dy"]
     color_space = meta.get("color_space", "rgb")
 
+    reference_node_id = data.get("reference_node_id")
+
     tree_copy = _json.loads(_json.dumps(session["tree"]))
     leaves_copy = {k: {**v, "base": v["base"].copy()} for k, v in session["leaves"].items()}
 
-    return jsonify(_compute_sensitivity(tree_copy, leaves_copy, dx, dy, color_space, delta))
+    if reference_node_id:
+        root_copy = _find_node(tree_copy, reference_node_id)
+        if root_copy is None:
+            return jsonify({"error": "unknown reference_node_id"}), 404
+    else:
+        root_copy = tree_copy
+
+    return jsonify(_compute_sensitivity(root_copy, leaves_copy, dx, dy, color_space, delta))
 
 
 @app.route("/api/prune-methods")

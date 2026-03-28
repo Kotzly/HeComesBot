@@ -4,6 +4,7 @@
 let treeId           = null;
 let treeData         = null;
 let selectedId       = null;
+let referenceId      = null;
 let collapsedIds     = new Set();
 let functionsData    = null;
 let funcParamsData   = null;
@@ -78,6 +79,7 @@ function scheduleNodePreview(nodeId) {
 
 async function fetchNodePreview(nodeId) {
   if (!treeId || nodeId !== selectedId) return;
+  const previewNodeId = referenceId || nodeId;
   const loading = document.getElementById('node-preview-loading');
   const img     = document.getElementById('node-preview-img');
   loading.style.display = '';
@@ -85,7 +87,7 @@ async function fetchNodePreview(nodeId) {
   try {
     const res  = await fetch('/api/node/preview', {
       method: 'POST', headers: jsonHdr(),
-      body: JSON.stringify({tree_id: treeId, node_id: nodeId}),
+      body: JSON.stringify({tree_id: treeId, node_id: previewNodeId}),
     });
     const data = await res.json();
     if (data.error || nodeId !== selectedId) return;
@@ -102,6 +104,33 @@ async function fetchNodePreview(nodeId) {
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
+function _updateReferenceBar() {
+  const bar = document.getElementById('reference-bar');
+  if (referenceId) {
+    document.getElementById('reference-id-display').textContent = referenceId;
+    bar.classList.remove('hidden');
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+function onSetReference() {
+  if (!selectedId) return;
+  referenceId     = selectedId;
+  sensitivityData = null;
+  _updateReferenceBar();
+  renderTree();
+  scheduleNodePreview(selectedId);
+}
+
+function onClearReference() {
+  referenceId     = null;
+  sensitivityData = null;
+  _updateReferenceBar();
+  renderTree();
+  if (selectedId) scheduleNodePreview(selectedId);
+}
+
 async function onSensitivity() {
   if (!selectedId) return;
   const btn = document.getElementById('sensitivity-btn');
@@ -110,8 +139,9 @@ async function onSensitivity() {
     const res = await fetch('/api/sensitivity', {
       method: 'POST', headers: jsonHdr(),
       body: JSON.stringify({
-        tree_id: treeId,
-        delta:   parseFloat(document.getElementById('prune-delta').value),
+        tree_id:            treeId,
+        delta:              parseFloat(document.getElementById('prune-delta').value),
+        reference_node_id:  referenceId || undefined,
       }),
     });
     const data = await res.json();
@@ -199,6 +229,8 @@ async function init() {
   document.getElementById('update-node-params-btn').addEventListener('click', onUpdateNodeParams);
   document.getElementById('sensitivity-btn')       .addEventListener('click', onSensitivity);
   document.getElementById('clear-sensitivity-btn') .addEventListener('click', () => { sensitivityData = null; renderTree(); });
+  document.getElementById('set-reference-btn')     .addEventListener('click', onSetReference);
+  document.getElementById('clear-reference-btn')   .addEventListener('click', onClearReference);
   document.getElementById('prune-btn')             .addEventListener('click', onPrune);
   document.getElementById('random-seed-btn')  .addEventListener('click', () => {
     document.getElementById('seed-input').value = randInt();
@@ -289,8 +321,10 @@ function applyLoadedTree(data) {
   treeId          = data.tree_id;
   treeData        = data.tree;
   selectedId      = null;
+  referenceId     = null;
   sensitivityData = null;
   collapsedIds.clear();
+  _updateReferenceBar();
   const meta = data.meta || {};
   if (meta.seed      != null) document.getElementById('seed-input').value      = meta.seed;
   if (meta.dx        != null) document.getElementById('width-input').value     = meta.dx;
