@@ -120,6 +120,7 @@ async function onFlatten() {
     const node = findNode(treeData, selectedId);
     if (node) selectNode(node); else renderTree();
     updateStats(treeData);
+    if (sensitivityData) await fetchSensitivity();
   } finally {
     btn.disabled = false; btn.textContent = 'Flatten to Color';
   }
@@ -152,23 +153,27 @@ function onClearReference() {
   if (selectedId) scheduleNodePreview(selectedId);
 }
 
+async function fetchSensitivity() {
+  const res = await fetch('/api/sensitivity', {
+    method: 'POST', headers: jsonHdr(),
+    body: JSON.stringify({
+      tree_id:           treeId,
+      delta:             parseFloat(document.getElementById('prune-delta').value),
+      reference_node_id: referenceId || undefined,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) { alert(data.error); return; }
+  sensitivityData = data;
+  renderTree();
+}
+
 async function onSensitivity() {
   if (!selectedId) return;
   const btn = document.getElementById('sensitivity-btn');
   btn.disabled = true; btn.textContent = 'Calculating…';
   try {
-    const res = await fetch('/api/sensitivity', {
-      method: 'POST', headers: jsonHdr(),
-      body: JSON.stringify({
-        tree_id:            treeId,
-        delta:              parseFloat(document.getElementById('prune-delta').value),
-        reference_node_id:  referenceId || undefined,
-      }),
-    });
-    const data = await res.json();
-    if (data.error) { alert(data.error); return; }
-    sensitivityData = data;
-    renderTree();
+    await fetchSensitivity();
   } finally {
     btn.disabled = false; btn.textContent = 'Show Sensitivity';
   }
