@@ -4,10 +4,10 @@ from os.path import join
 
 from PIL import Image
 
-from hecomesbot.bot.image import combine_image, make_background, make_text
-from hecomesbot.bot.command import parse_cmd_args
-from hecomesbot.bot.utils import make_kwargs, makedirs
-from hecomesbot.config import get_config
+from hecomes.bot.image import combine_image, make_background, make_text
+from hecomes.bot.command import parse_cmd_args
+from hecomes.bot.utils import make_kwargs, makedirs
+from hecomes.config import get_config
 
 
 def rename_with_seed(filename, seed):

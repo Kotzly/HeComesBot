@@ -1,6 +1,6 @@
 import numpy as np
 
-from hecomesbot.artgen.func_utils import hsv_to_rgb
+from hecomes.artgen.func_utils import hsv_to_rgb
 
 COLOR_SPACES = ("rgb", "hsv", "cmy")
 

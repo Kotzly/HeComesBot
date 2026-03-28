@@ -2,7 +2,7 @@ import numpy as np
 from scipy.interpolate import NearestNDInterpolator
 from scipy.spatial.transform import Rotation as R
 
-from hecomesbot.artgen.func_utils import (
+from hecomes.artgen.func_utils import (
     _apply_kernel,
     _gaussian_kernel_5,
     _sharpen_kernel_5,

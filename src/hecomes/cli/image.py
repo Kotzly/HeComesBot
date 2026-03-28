@@ -4,10 +4,10 @@ import pathlib
 import numpy as np
 from PIL import Image as PILImage
 
-from hecomesbot.artgen.functions import BUILD_FUNCTIONS, generate_params
-from hecomesbot.artgen.render import COLOR_SPACES, render_frame
-from hecomesbot.artgen.tree import get_random_function, random_delta
-from hecomesbot.config import DATA_DIR, load_personality_list
+from hecomes.artgen.functions import BUILD_FUNCTIONS, generate_params
+from hecomes.artgen.render import COLOR_SPACES, render_frame
+from hecomes.artgen.tree import get_random_function, random_delta
+from hecomes.config import DATA_DIR, load_personality_list
 
 _FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
 

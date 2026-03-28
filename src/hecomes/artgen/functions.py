@@ -3,7 +3,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from hecomesbot.artgen.func_defs import (
+from hecomes.artgen.func_defs import (
     _gen_circle,
     _gen_color_rotate,
     _gen_cone,

@@ -6,9 +6,9 @@ import subprocess
 import numpy as np
 from numpy.random import rand
 
-from hecomesbot.artgen.functions import generate_params
-from hecomesbot.artgen.tree import get_random_function, random_delta
-from hecomesbot.config import DATA_DIR, load_personality_list
+from hecomes.artgen.functions import generate_params
+from hecomes.artgen.tree import get_random_function, random_delta
+from hecomes.config import DATA_DIR, load_personality_list
 
 RECOMMENDED_CODECS = {
     "mp4": "libopenh264",

@@ -2,7 +2,7 @@ from os.path import isfile
 
 import numpy as np
 
-from hecomesbot.artgen.functions import BUILD_FUNCTIONS
+from hecomes.artgen.functions import BUILD_FUNCTIONS
 
 
 def random_delta(alpha=5e-3):
