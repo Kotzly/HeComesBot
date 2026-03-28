@@ -1,10 +1,12 @@
-from PIL import Image
 import os
-from os.path import join
 import shutil
-from config import get_config
+from os.path import join
+
+from PIL import Image
+
+from build import combine_image, make_background, make_text
 from command import parse_cmd_args
-from build import make_background, combine_image, make_text
+from config import get_config
 from utils import make_kwargs, makedirs
 
 
@@ -38,9 +40,11 @@ def job():
     global CONFIG
     CONFIG = parse_cmd_args()
     if CONFIG.history_path is not None:
-        paths = [CONFIG.history_path,
-                 join(CONFIG.history_path, "outputs"),
-                 join(CONFIG.history_path, "backgrounds")]
+        paths = [
+            CONFIG.history_path,
+            join(CONFIG.history_path, "outputs"),
+            join(CONFIG.history_path, "backgrounds"),
+        ]
         makedirs(paths)
     make_text_kwargs, make_background_kwargs, combine_kwargs = make_kwargs(CONFIG)
 
@@ -50,10 +54,12 @@ def job():
 
     make_background(**make_background_kwargs)
     combine_image(title, **combine_kwargs)
-    log_images(CONFIG.history_path, CONFIG.output_path, CONFIG.background_path, CONFIG.seed)
+    log_images(
+        CONFIG.history_path, CONFIG.output_path, CONFIG.background_path, CONFIG.seed
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if get_config("restart"):
         history_path = get_config("history_path")
         restart(history_path)
