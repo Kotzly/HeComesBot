@@ -57,8 +57,8 @@ def _parse_args():
                       help="Image height. Default: 512.")
     parser.add_option("--min-depth", dest="min_depth", type=int, default=6,
                       help="Minimum tree depth. Default: 6.")
-    parser.add_option("--max-depth", dest="max_depth", type=int, default=16,
-                      help="Maximum tree depth. Default: 16.")
+    parser.add_option("--max-depth", dest="max_depth", type=int, default=12,
+                      help="Maximum tree depth. Default: 12.")
     parser.add_option("--alpha", dest="alpha", type=float, default=4e-3,
                       help="Leaf delta scale. Default: 4e-3.")
     parser.add_option("-c", "--color-space", dest="color_space", type=str, default="rgb",

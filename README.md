@@ -53,7 +53,7 @@ Options:
 | `-W`, `--width` | Image width | 512 |
 | `-H`, `--height` | Image height | 512 |
 | `--min-depth` | Minimum tree depth | 6 |
-| `--max-depth` | Maximum tree depth | 16 |
+| `--max-depth` | Maximum tree depth | 12 |
 | `-c`, `--color-space` | Color space: `rgb`, `hsv`, `cmy` | `rgb` |
 | `--personality` | Personality JSON filename in `data/` | `personality.json` |
 
@@ -80,7 +80,7 @@ Options:
 | `-p`, `--processes` | Parallel workers | 3 |
 | `-c`, `--chunk_size` | Frames per batch | 10 |
 | `--min-depth` | Minimum tree depth | 6 |
-| `--max-depth` | Maximum tree depth | 16 |
+| `--max-depth` | Maximum tree depth | 12 |
 | `--color-space` | Color space: `rgb`, `hsv`, `cmy` | `rgb` |
 | `--independent-channels` | One tree per channel (H uses `personality_h.json`) | off |
 | `--k` | Generate K channel from a tree (CMY only) | off |

@@ -127,8 +127,8 @@ def _parse_args():
                       help="Number of parallel workers. Default: 3.")
     parser.add_option("--min-depth", dest="min_depth", type=int, default=6,
                       help="Minimum tree depth. Default: 6.")
-    parser.add_option("--max-depth", dest="max_depth", type=int, default=16,
-                      help="Maximum tree depth. Default: 16.")
+    parser.add_option("--max-depth", dest="max_depth", type=int, default=12,
+                      help="Maximum tree depth. Default: 12.")
     parser.add_option("--color-space", dest="color_space", type=str, default="rgb",
                       help="Color space: rgb, hsv, cmy. Default: rgb.")
     parser.add_option("--independent-channels", dest="independent_channels",

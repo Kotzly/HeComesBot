@@ -56,28 +56,44 @@ def _gen_gradient():
     }
 
 
-def cone(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None):
-    if cx is None or cy is None:
-        cx, cy = random_point()
-    if rx is None or ry is None:
-        rx, ry = random_radius()
+def _cone_gradient(dx, dy, cx, cy, rx, ry):
     x, y = linear_mesh(dx=dx, dy=dy)
-    gradient = (
+    return (
         np.sqrt(((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2)
         .reshape(dy, dx, 1)
         .astype(np.float32)
     )
-    return np.broadcast_to(gradient, (dy, dx, 3)).copy()
+
+
+def cone(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
+    if cx is None or cy is None:
+        cx, cy = random_point()
+    if rx is None or ry is None:
+        rx, ry = random_radius()
+    if color is None:
+        color = np.random.rand(3).astype(np.float32)
+    else:
+        color = np.asarray(color, dtype=np.float32)
+    gradient = _cone_gradient(dx, dy, cx, cy, rx, ry)
+    return (np.broadcast_to(gradient, (dy, dx, 3)) * color.reshape(1, 1, 3)).copy()
 
 
 def _gen_cone():
     cx, cy = random_point()
     rx, ry = random_radius()
-    return {"cx": float(cx), "cy": float(cy), "rx": float(rx), "ry": float(ry)}
+    return {
+        "cx": float(cx), "cy": float(cy),
+        "rx": float(rx), "ry": float(ry),
+        "color": np.random.rand(3).tolist(),
+    }
 
 
 def circle(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
-    base = cone(dx=dx, dy=dy, cx=cx, cy=cy, rx=rx, ry=ry)
+    if cx is None or cy is None:
+        cx, cy = random_point()
+    if rx is None or ry is None:
+        rx, ry = random_radius()
+    base = _cone_gradient(dx, dy, cx, cy, rx, ry)
     if color is None:
         color = np.random.rand(3).astype(np.float32)
     else:
@@ -85,6 +101,31 @@ def circle(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
     circ = np.ones((dy, dx, 3), dtype=np.float32) * color.reshape(1, 1, 3)
     circ[base > 1] = 0
     return circ
+
+
+def sphere(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
+    if cx is None or cy is None:
+        cx, cy = random_point()
+    if rx is None or ry is None:
+        rx, ry = random_radius()
+    if color is None:
+        color = np.random.rand(3).astype(np.float32)
+    else:
+        color = np.asarray(color, dtype=np.float32)
+    x, y = linear_mesh(dx=dx, dy=dy)
+    r_sq = ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2
+    z = np.sqrt(np.maximum(0.0, 1.0 - r_sq)).reshape(dy, dx, 1).astype(np.float32)
+    return (np.broadcast_to(z, (dy, dx, 3)) * color.reshape(1, 1, 3)).copy()
+
+
+def _gen_sphere():
+    cx, cy = random_point()
+    rx, ry = random_radius()
+    return {
+        "cx": float(cx), "cy": float(cy),
+        "rx": float(rx), "ry": float(ry),
+        "color": np.random.rand(3).tolist(),
+    }
 
 
 def _gen_circle():

@@ -122,8 +122,9 @@ export function updateStats(node) {
 export function buildLegend() {
   const entries = [
     {label: 'rand_color', node: {arity:0, func:'rand_color', params:{color:[0.75,0.35,0.6]}}},
-    {label: 'circle',     node: {arity:0, func:'circle',     params:{cx:0,cy:0,rx:0.6,ry:0.6}}},
-    {label: 'cone',       node: {arity:0, func:'cone',       params:{cx:0.8,cy:0.8,rx:0.4,ry:0.4}}},
+    {label: 'circle',     node: {arity:0, func:'circle',     params:{cx:0,cy:0,rx:0.6,ry:0.6,color:[0.3,0.7,0.4]}}},
+    {label: 'cone',       node: {arity:0, func:'cone',       params:{cx:0.8,cy:0.8,rx:0.4,ry:0.4,color:[0.8,0.5,0.2]}}},
+    {label: 'sphere',     node: {arity:0, func:'sphere',     params:{cx:0,cy:0,rx:0.6,ry:0.6,color:[0.4,0.6,0.9]}}},
     {label: 'x_var',      node: {arity:0, func:'x_var',      params:{}}},
     {label: 'y_var',      node: {arity:0, func:'y_var',      params:{}}},
     {label: 'other leaf', node: {arity:0, func:'_other',     params:{}}},
