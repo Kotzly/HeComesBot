@@ -550,7 +550,14 @@ function renderTree() {
     .attr('stroke', d => strokeFor(d.data, d.data.id === selectedId).color)
     .attr('stroke-width', d => strokeFor(d.data, d.data.id === selectedId).width)
     .style('cursor', 'pointer')
-    .on('click',   (e, d) => { e.stopPropagation(); selectNode(d.data); })
+    .on('mousedown', (e, d) => { d._dragOrigin = [e.clientX, e.clientY]; })
+    .on('click', (e, d) => {
+      const [ox, oy] = d._dragOrigin || [e.clientX, e.clientY];
+      const dist = Math.hypot(e.clientX - ox, e.clientY - oy);
+      if (dist > 6) return;
+      e.stopPropagation();
+      selectNode(d.data);
+    })
     .on('dblclick', (e, d) => { e.stopPropagation(); toggleCollapse(d.data); });
 
   // Collapse indicator
