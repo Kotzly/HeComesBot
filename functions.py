@@ -9,9 +9,10 @@ def rand_color(dx=None, dy=None):
     color = np.random.rand(1, 1, 3).astype(np.float32)
     return np.broadcast_to(color, (dy, dx, 3)).copy()
 
-def _rotated_gradient(dx, dy):
+def _rotated_gradient(dx, dy, angle=None):
     """Linear gradient at a random angle, normalized to [0, 1], colored by a random RGB."""
-    angle = np.random.rand() * 2 * np.pi
+    if angle is None:
+        angle = np.random.rand() * 2 * np.pi
     color = np.random.rand(3).astype(np.float32)
     x, y  = linear_mesh(dx=dx, dy=dy)
     grad  = np.cos(angle) * x + np.sin(angle) * y          # (dy, dx), range subset of [-2, 2]

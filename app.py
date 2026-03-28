@@ -7,7 +7,7 @@ import os
 from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image
 
-from functions import BUILD_FUNCTIONS, linear_mesh
+from functions import BUILD_FUNCTIONS, linear_mesh, hsv_to_rgb
 from build import get_random_function
 from config import load_personality_list
 from video import random_delta
@@ -16,6 +16,26 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 
 _sessions = {}
 SAVE_DIR = 'saved_trees'
+COLOR_SPACES = ('rgb', 'hsv', 'cmy')
+
+
+def _render_frame(raw_batch, color_space, dx, dy):
+    """Convert a raw eval result (N, ?, ?, ?) to a displayable (dy, dx, 3) uint8 array."""
+    frame = np.broadcast_to(raw_batch[0], (dy, dx, raw_batch.shape[-1])).copy()
+    if color_space == 'hsv':
+        hsv = np.stack([
+            frame[..., 0] % 1.0,
+            frame[..., 1].clip(0, 1),
+            frame[..., 2].clip(0, 1),
+        ], axis=-1)
+        frame = hsv_to_rgb(hsv)
+    elif color_space == 'cmy':
+        frame = (1.0 - frame.clip(0, 1))
+    else:
+        frame = frame.clip(0, 1)
+    if frame.shape[-1] != 3:
+        frame = frame[..., :3]
+    return np.rint(frame * 255).astype(np.uint8)
 
 FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
 FUNCS_BY_ARITY = {}
@@ -192,6 +212,9 @@ def build():
     max_depth = int(data.get('max_depth', 16))
     personality_path = data.get('personality', 'personality.json')
     alpha = float(data.get('alpha', 4e-3))
+    color_space = data.get('color_space', 'rgb')
+    if color_space not in COLOR_SPACES:
+        color_space = 'rgb'
 
     weights = load_personality_list(personality_path)
     np.random.seed(seed % (2**32 - 1))
@@ -202,7 +225,7 @@ def build():
     _sessions[tree_id] = {
         'tree': tree, 'leaves': leaves,
         'meta': {'dx': dx, 'dy': dy, 'seed': seed, 'min_depth': min_depth,
-                 'max_depth': max_depth, 'alpha': alpha},
+                 'max_depth': max_depth, 'alpha': alpha, 'color_space': color_space},
     }
     return jsonify({'tree_id': tree_id, 'tree': tree, 'meta': _sessions[tree_id]['meta']})
 
@@ -216,13 +239,10 @@ def preview():
         return jsonify({'error': 'unknown tree_id'}), 404
 
     dx, dy = session['meta']['dx'], session['meta']['dy']
+    color_space = session['meta'].get('color_space', 'rgb')
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     raw = _eval_rich(session['tree'], steps, session['leaves'])
-    frame = np.broadcast_to(raw[0].clip(0, 1), (dy, dx, raw.shape[-1])).copy()
-    if frame.shape[-1] != 3:
-        frame = frame[..., :3]
-
-    img_8 = np.rint(frame * 255).astype(np.uint8)
+    img_8 = _render_frame(raw, color_space, dx, dy)
     buf = io.BytesIO()
     Image.fromarray(img_8).save(buf, format='PNG')
     b64 = base64.b64encode(buf.getvalue()).decode()
@@ -280,13 +300,10 @@ def node_preview():
         return jsonify({'error': 'unknown node_id'}), 404
 
     dx, dy = session['meta']['dx'], session['meta']['dy']
+    color_space = session['meta'].get('color_space', 'rgb')
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     raw = _eval_rich(node, steps, session['leaves'])
-    frame = np.broadcast_to(raw[0].clip(0, 1), (dy, dx, raw.shape[-1])).copy()
-    if frame.shape[-1] != 3:
-        frame = frame[..., :3]
-
-    img_8 = np.rint(frame * 255).astype(np.uint8)
+    img_8 = _render_frame(raw, color_space, dx, dy)
     buf = io.BytesIO()
     Image.fromarray(img_8).save(buf, format='PNG')
     b64 = base64.b64encode(buf.getvalue()).decode()

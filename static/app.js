@@ -237,7 +237,8 @@ function applyLoadedTree(data) {
   if (meta.dx        != null) document.getElementById('width-input').value     = meta.dx;
   if (meta.dy        != null) document.getElementById('height-input').value    = meta.dy;
   if (meta.min_depth != null) document.getElementById('min-depth-input').value = meta.min_depth;
-  if (meta.max_depth != null) document.getElementById('max-depth-input').value = meta.max_depth;
+  if (meta.max_depth   != null) document.getElementById('max-depth-input').value    = meta.max_depth;
+  if (meta.color_space != null) document.getElementById('color-space-select').value = meta.color_space;
 
   document.getElementById('tree-hint').style.display    = 'none';
   document.getElementById('preview-btn').disabled       = false;
@@ -262,7 +263,8 @@ async function onBuild() {
         height:      parseInt(document.getElementById('height-input').value),
         min_depth:   parseInt(document.getElementById('min-depth-input').value),
         max_depth:   parseInt(document.getElementById('max-depth-input').value),
-        personality: document.getElementById('personality-select').value,
+        personality:  document.getElementById('personality-select').value,
+        color_space:  document.getElementById('color-space-select').value,
       }),
     });
     applyLoadedTree(await res.json());
