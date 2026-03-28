@@ -105,7 +105,7 @@ async function fetchNodePreview(nodeId) {
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
 function _updateReferenceBar() {
-  const bar = document.getElementById('reference-bar');
+  const bar = document.getElementById('reference-toolbar');
   if (referenceId) {
     document.getElementById('reference-id-display').textContent = referenceId;
     bar.classList.remove('hidden');
@@ -606,6 +606,12 @@ function buildLeafEditor(node) {
     msg.textContent = 'No editable params for this leaf type.';
     controls.appendChild(msg);
   }
+
+  controls.addEventListener('input', () => {
+    if (document.getElementById('auto-update-chk').checked) {
+      onUpdateLeaf();
+    }
+  });
 }
 
 // ── Non-leaf param editor ─────────────────────────────────────────────────────

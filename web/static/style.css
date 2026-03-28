@@ -37,9 +37,47 @@ body {
   position: relative;
   overflow: hidden;
   background: #1e1e1e;
+  display: flex;
+  flex-direction: column;
 }
 
-#tree-svg { width: 100%; height: 100%; display: block; }
+#tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: #252526;
+  border-bottom: 1px solid #3c3c3c;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+#tree-toolbar button {
+  width: auto;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+#auto-update-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  color: #999;
+  font-size: 12px;
+  cursor: pointer;
+  margin: 0;
+}
+
+#reference-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+#reference-toolbar.hidden { display: none; }
+
+#tree-svg { flex: 1; width: 100%; display: block; }
 
 #tree-hint {
   position: absolute;
