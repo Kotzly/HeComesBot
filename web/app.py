@@ -1,4 +1,5 @@
 import base64
+import colorsys
 import io
 import os
 import pathlib
@@ -488,44 +489,69 @@ def _make_rand_color_leaf(mean_color, dx, dy, alpha):
     return node, leaf_data
 
 
-def _collect_leaf_parents(node, result):
-    """Collect nodes that have at least one leaf child, in post-order (bottom-up)."""
+def _rgb_to_color_space(mean_rgb, color_space):
+    r, g, b = float(mean_rgb[0]), float(mean_rgb[1]), float(mean_rgb[2])
+    if color_space == "hsv":
+        return list(colorsys.rgb_to_hsv(r, g, b))
+    if color_space == "cmy":
+        return [1.0 - r, 1.0 - g, 1.0 - b]
+    return [r, g, b]
+
+
+def _collect_parents_postorder(node, result):
+    """Collect all non-leaf nodes in post-order (bottom-up)."""
     for child in node.get("children", []):
-        if child["arity"] > 0:
-            _collect_leaf_parents(child, result)
-    if any(c["arity"] == 0 for c in node.get("children", [])):
+        _collect_parents_postorder(child, result)
+    if node.get("children"):
         result.append(node)
 
 
 def _prune_pass(subtree_root, leaves, dx, dy, color_space, method_fn, delta, threshold, alpha):
-    """One bottom-up pruning pass. Returns number of nodes pruned."""
+    """One bottom-up pruning pass. Returns number of subbranches pruned."""
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    _TEMP_ID = "__prune_temp__"
 
     original_raw = _eval_rich(subtree_root, steps, leaves)
     original_frame = render_frame(original_raw, color_space, dx, dy)
 
-    leaf_parents = []
-    _collect_leaf_parents(subtree_root, leaf_parents)
+    parents = []
+    _collect_parents_postorder(subtree_root, parents)
 
     n_pruned = 0
-    for parent in leaf_parents:
+    for parent in parents:
         for i, child in enumerate(parent["children"]):
-            if child["arity"] != 0 or child["func"] == "rand_color":
+            if child["func"] == "rand_color":
                 continue
 
-            leaf = leaves[child["id"]]
-            original_base = leaf["base"]
-            leaf["base"] = original_base + np.float32(delta)
+            # Evaluate the child subbranch
+            child_raw = _eval_rich(child, steps, leaves)
+            child_base = child_raw[0] if child_raw.ndim == 4 else child_raw
+
+            # Temporarily replace child with a perturbed constant node
+            leaves[_TEMP_ID] = {
+                "base": (child_base + np.float32(delta)).astype(np.float32),
+                "delta": np.float32(0), "func": "rand_color", "params": {},
+            }
+            temp_node = {"id": _TEMP_ID, "func": "rand_color", "arity": 0, "children": [], "delta": 0.0, "params": {}}
+            parent["children"][i] = temp_node
 
             perturbed_raw = _eval_rich(subtree_root, steps, leaves)
             perturbed_frame = render_frame(perturbed_raw, color_space, dx, dy)
 
-            leaf["base"] = original_base
+            # Restore
+            parent["children"][i] = child
+            del leaves[_TEMP_ID]
 
             if method_fn(original_frame, perturbed_frame, threshold=threshold):
-                mean_color = original_base.mean(axis=(0, 1))
+                # Mean color from the rendered child output (visually accurate)
+                child_frame = render_frame(child_raw, color_space, dx, dy)
+                mean_rgb = child_frame.mean(axis=(0, 1)) / 255.0
+                mean_color = _rgb_to_color_space(mean_rgb, color_space)
+
+                for lid in _collect_leaf_ids(child):
+                    leaves.pop(lid, None)
+
                 new_node, new_leaf_data = _make_rand_color_leaf(mean_color, dx, dy, alpha)
-                leaves.pop(child["id"])
                 parent["children"][i] = new_node
                 leaves[new_node["id"]] = new_leaf_data
                 n_pruned += 1
