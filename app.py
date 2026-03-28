@@ -262,6 +262,34 @@ def load_tree():
     return jsonify({'tree_id': tree_id, 'tree': session['tree'], 'meta': session['meta']})
 
 
+@app.route('/api/node/preview', methods=['POST'])
+def node_preview():
+    data = request.json
+    tree_id = data['tree_id']
+    node_id = data['node_id']
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({'error': 'unknown tree_id'}), 404
+
+    node = _find_node(session['tree'], node_id)
+    if node is None:
+        return jsonify({'error': 'unknown node_id'}), 404
+
+    dx, dy = session['meta']['dx'], session['meta']['dy']
+    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    raw = _eval_rich(node, steps, session['leaves'])
+    frame = np.broadcast_to(raw[0].clip(0, 1), (dy, dx, raw.shape[-1])).copy()
+    if frame.shape[-1] != 3:
+        frame = frame[..., :3]
+
+    img_8 = np.rint(frame * 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(img_8).save(buf, format='PNG')
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return jsonify({'image': f'data:image/png;base64,{b64}'})
+
+
 @app.route('/api/node/set-func', methods=['POST'])
 def set_func():
     data = request.json
@@ -403,4 +431,4 @@ def set_leaf_params():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, host="0.0.0.0")

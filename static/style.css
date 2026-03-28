@@ -160,6 +160,22 @@ hr { border: none; border-top: 1px solid #3c3c3c; }
   user-select: none;
 }
 
+/* ── Node preview ─────────────────────────────────────────────────────────── */
+#node-preview-wrap {
+  margin-bottom: 4px;
+}
+
+#node-preview-img {
+  width: 100%;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #3c3c3c;
+}
+
+#node-preview-img:hover {
+  border-color: #0078d4;
+}
+
 /* ── Leaf editor ──────────────────────────────────────────────────────────── */
 #leaf-editor.hidden { display: none; }
 

@@ -71,6 +71,11 @@
   <!-- Right: node editor -->
   <div id="node-panel" class="hidden">
     <h2>Node</h2>
+
+    <div id="node-preview-wrap">
+      <div id="node-preview-loading" class="muted" style="display:none">Rendering…</div>
+      <img id="node-preview-img" alt="" title="Click to enlarge" style="display:none">
+    </div>
     <div class="field-row"><span class="label">ID</span>    <span id="node-id-display"   class="mono"></span></div>
     <div class="field-row"><span class="label">Function</span><span id="node-func-display" class="mono"></span></div>
     <div class="field-row"><span class="label">Arity</span>  <span id="node-arity-display"></span></div>

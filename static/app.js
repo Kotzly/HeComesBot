@@ -69,6 +69,38 @@ function strokeFor(node, isSelected) {
   return {color: '#333', width: 1};
 }
 
+// ── Node preview ─────────────────────────────────────────────────────────────
+let _previewTimer = null;
+
+function scheduleNodePreview(nodeId) {
+  clearTimeout(_previewTimer);
+  _previewTimer = setTimeout(() => fetchNodePreview(nodeId), 120);
+}
+
+async function fetchNodePreview(nodeId) {
+  if (!treeId || nodeId !== selectedId) return;
+  const loading = document.getElementById('node-preview-loading');
+  const img     = document.getElementById('node-preview-img');
+  loading.style.display = '';
+  img.style.display = 'none';
+  try {
+    const res  = await fetch('/api/node/preview', {
+      method: 'POST', headers: jsonHdr(),
+      body: JSON.stringify({tree_id: treeId, node_id: nodeId}),
+    });
+    const data = await res.json();
+    if (data.error || nodeId !== selectedId) return;
+    img.src = data.image;
+    img.style.display = '';
+    img.onclick = () => {
+      document.getElementById('modal-img').src = data.image;
+      openModal();
+    };
+  } finally {
+    loading.style.display = 'none';
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   const [funcsRes, persRes] = await Promise.all([
@@ -308,7 +340,10 @@ async function onUpdateLeaf() {
   if (data.error) { alert(data.error); return; }
   treeData = data.tree;
   const updated = findNode(treeData, selectedId);
-  if (updated) selectNode(updated);
+  if (updated) {
+    selectNode(updated);
+    scheduleNodePreview(selectedId);
+  }
 }
 
 function collectLeafParams(func) {
@@ -416,6 +451,11 @@ function selectNode(nodeData) {
   } else {
     leafEditor.classList.add('hidden');
   }
+
+  // Reset preview state and kick off render
+  document.getElementById('node-preview-img').style.display = 'none';
+  scheduleNodePreview(nodeData.id);
+
   renderTree();
 }
 
