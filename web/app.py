@@ -510,7 +510,7 @@ def _prune_pass(subtree_root, leaves, dx, dy, color_space, method_fn, delta, thr
     n_pruned = 0
     for parent in leaf_parents:
         for i, child in enumerate(parent["children"]):
-            if child["arity"] != 0:
+            if child["arity"] != 0 or child["func"] == "rand_color":
                 continue
 
             leaf = leaves[child["id"]]
