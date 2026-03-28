@@ -142,7 +142,7 @@ async function fetchSensitivity() {
 }
 
 async function onSensitivity() {
-  if (!state.selectedId) return;
+  if (!state.treeId) return;
   const btn = document.getElementById('sensitivity-btn');
   btn.disabled = true; btn.textContent = 'Calculating…';
   try {
