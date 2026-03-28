@@ -99,7 +99,7 @@ def circle(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
     else:
         color = np.asarray(color, dtype=np.float32)
     circ = np.ones((dy, dx, 3), dtype=np.float32) * color.reshape(1, 1, 3)
-    circ[base > 1] = 0
+    circ[base[:, :, 0] > 1] = 0
     return circ
 
 
