@@ -559,57 +559,74 @@ def _prune_pass(subtree_root, leaves, dx, dy, color_space, method_fn, delta, thr
     return n_pruned
 
 
-def _sensitivity_pass(subtree_root, leaves_copy, dx, dy, color_space, delta, alpha, result):
-    """Bottom-up: calculate sensitivity for each child, then simulate pruning to allow
-    higher nodes to be evaluated as if their children were already simplified."""
+def _compute_sensitivity(tree_root, leaves, dx, dy, color_space, delta):
+    """For every non-leaf node N compute:
+      - root:  |ΔH| at tree root when N's output is perturbed
+      - leaf:  mean |ΔH| at N when each of its leaf descendants is perturbed
+    Returns {node_id: {"root": float, "leaf": float}}
+    """
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     temp_id = "__sens_temp__"
+    result = {}
 
-    original_raw = _eval_rich(subtree_root, steps, leaves_copy)
-    original_frame = render_frame(original_raw, color_space, dx, dy)
+    original_root_raw = _eval_rich(tree_root, steps, leaves)
+    original_root_frame = render_frame(original_root_raw, color_space, dx, dy)
+    original_root_entropy = image_entropy(original_root_frame)
 
-    parents = []
-    _collect_parents_postorder(subtree_root, parents)
+    def visit(node):
+        if node["arity"] == 0:
+            return
 
-    for parent in parents:
-        for i, child in enumerate(parent["children"]):
-            if child["func"] == "rand_color":
-                continue
+        # ── Root sensitivity ──────────────────────────────────────────────
+        node_raw = _eval_rich(node, steps, leaves)
+        node_base = node_raw[0] if node_raw.ndim == 4 else node_raw
 
-            child_raw = _eval_rich(child, steps, leaves_copy)
-            child_base = child_raw[0] if child_raw.ndim == 4 else child_raw
-
-            leaves_copy[temp_id] = {
-                "base": (child_base + np.float32(delta)).astype(np.float32),
+        if tree_root["id"] == node["id"]:
+            root_sens = 0.0
+        else:
+            parent, idx = _find_parent(tree_root, node["id"])
+            leaves[temp_id] = {
+                "base": (node_base + np.float32(delta)).astype(np.float32),
                 "delta": np.float32(0), "func": "rand_color", "params": {},
             }
             temp_node = {"id": temp_id, "func": "rand_color", "arity": 0,
                          "children": [], "delta": 0.0, "params": {}}
-            parent["children"][i] = temp_node
+            parent["children"][idx] = temp_node
 
-            perturbed_raw = _eval_rich(subtree_root, steps, leaves_copy)
-            perturbed_frame = render_frame(perturbed_raw, color_space, dx, dy)
-
-            parent["children"][i] = child
-            del leaves_copy[temp_id]
-
-            result[child["id"]] = round(
-                abs(image_entropy(perturbed_frame) - image_entropy(original_frame)), 4
+            perturbed_root_frame = render_frame(
+                _eval_rich(tree_root, steps, leaves), color_space, dx, dy
             )
+            parent["children"][idx] = node
+            del leaves[temp_id]
 
-            # Simulate pruning this child so higher nodes see simplified tree
-            child_frame = render_frame(child_raw, color_space, dx, dy)
-            mean_rgb = child_frame.mean(axis=(0, 1)) / 255.0
-            mean_color = _rgb_to_color_space(mean_rgb, color_space)
-            for lid in _collect_leaf_ids(child):
-                leaves_copy.pop(lid, None)
-            new_node, new_leaf = _make_rand_color_leaf(mean_color, dx, dy, alpha)
-            parent["children"][i] = new_node
-            leaves_copy[new_node["id"]] = new_leaf
+            root_sens = round(abs(image_entropy(perturbed_root_frame) - original_root_entropy), 4)
 
-            # Recompute original frame with the simulated change
-            original_raw = _eval_rich(subtree_root, steps, leaves_copy)
-            original_frame = render_frame(original_raw, color_space, dx, dy)
+        # ── Avg leaf sensitivity ──────────────────────────────────────────
+        original_node_entropy = image_entropy(
+            render_frame(_eval_rich(node, steps, leaves), color_space, dx, dy)
+        )
+        leaf_deltas = []
+        for lid in _collect_leaf_ids(node):
+            if lid not in leaves:
+                continue
+            leaf = leaves[lid]
+            original_base = leaf["base"]
+            leaf["base"] = original_base + np.float32(delta)
+
+            perturbed_node_entropy = image_entropy(
+                render_frame(_eval_rich(node, steps, leaves), color_space, dx, dy)
+            )
+            leaf["base"] = original_base
+            leaf_deltas.append(abs(perturbed_node_entropy - original_node_entropy))
+
+        avg_leaf = round(float(np.mean(leaf_deltas)) if leaf_deltas else 0.0, 4)
+        result[node["id"]] = {"root": root_sens, "leaf": avg_leaf}
+
+        for child in node.get("children", []):
+            visit(child)
+
+    visit(tree_root)
+    return result
 
 
 @app.route("/api/sensitivity", methods=["POST"])
@@ -617,31 +634,20 @@ def sensitivity():
     import json as _json
     data = request.json
     tree_id = data["tree_id"]
-    node_id = data["node_id"]
     delta = float(data.get("delta", 0.05))
 
     session = _sessions.get(tree_id)
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
-    node = _find_node(session["tree"], node_id)
-    if node is None:
-        return jsonify({"error": "unknown node_id"}), 404
-    if node["arity"] == 0:
-        return jsonify({"error": "cannot analyze a leaf node"}), 400
 
     meta = session["meta"]
     dx, dy = meta["dx"], meta["dy"]
     color_space = meta.get("color_space", "rgb")
-    alpha = meta.get("alpha", 4e-3)
 
-    # Work on copies — do not modify the real session
     tree_copy = _json.loads(_json.dumps(session["tree"]))
     leaves_copy = {k: {**v, "base": v["base"].copy()} for k, v in session["leaves"].items()}
-    node_copy = _find_node(tree_copy, node_id)
 
-    result = {}
-    _sensitivity_pass(node_copy, leaves_copy, dx, dy, color_space, delta, alpha, result)
-    return jsonify(result)
+    return jsonify(_compute_sensitivity(tree_copy, leaves_copy, dx, dy, color_space, delta))
 
 
 @app.route("/api/prune-methods")

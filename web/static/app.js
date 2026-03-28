@@ -111,7 +111,6 @@ async function onSensitivity() {
       method: 'POST', headers: jsonHdr(),
       body: JSON.stringify({
         tree_id: treeId,
-        node_id: selectedId,
         delta:   parseFloat(document.getElementById('prune-delta').value),
       }),
     });
@@ -481,13 +480,17 @@ function renderTree() {
   if (sensitivityData) {
     nodeG.filter(d => sensitivityData[d.data.id] !== undefined)
       .append('text')
-      .attr('class', 'sens-label')
-      .attr('y', -14)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', '9px')
-      .attr('fill', '#f5a623')
+      .attr('y', -14).attr('text-anchor', 'middle')
+      .attr('font-size', '8px').attr('fill', '#f5a623')
       .attr('pointer-events', 'none')
-      .text(d => sensitivityData[d.data.id].toFixed(3));
+      .text(d => `R:${sensitivityData[d.data.id].root.toFixed(3)}`);
+
+    nodeG.filter(d => sensitivityData[d.data.id] !== undefined)
+      .append('text')
+      .attr('y', 20).attr('text-anchor', 'middle')
+      .attr('font-size', '8px').attr('fill', '#7ec8e3')
+      .attr('pointer-events', 'none')
+      .text(d => `L:${sensitivityData[d.data.id].leaf.toFixed(3)}`);
   }
 }
 
