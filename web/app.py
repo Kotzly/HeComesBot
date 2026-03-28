@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import pathlib
 import pickle
 import uuid
 
@@ -8,16 +9,17 @@ import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 from PIL import Image
 
-from build import get_random_function
+from artgen.func_utils import hsv_to_rgb
+from artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
+from artgen.tree import get_random_function
 from config import load_personality_list
-from functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
-from func_utils import hsv_to_rgb
 from video import random_delta
 
-app = Flask(__name__, static_folder="static", static_url_path="")
+_ROOT = pathlib.Path(__file__).parent.parent
+DATA_DIR = _ROOT / "data"
+SAVE_DIR = _ROOT / "saved_trees"
 
-_sessions = {}
-SAVE_DIR = "saved_trees"
+app = Flask(__name__, static_folder="static", static_url_path="")
 COLOR_SPACES = ("rgb", "hsv", "cmy")
 
 
@@ -171,7 +173,7 @@ def get_functions():
 @app.route("/api/personalities")
 def get_personalities():
     files = sorted(
-        f for f in os.listdir(".") if f.endswith(".json") and "personality" in f
+        f for f in os.listdir(DATA_DIR) if f.endswith(".json") and "personality" in f
     )
     return jsonify(files)
 
@@ -191,13 +193,13 @@ def build():
     dy = int(data.get("height", 256))
     min_depth = int(data.get("min_depth", 6))
     max_depth = int(data.get("max_depth", 16))
-    personality_path = data.get("personality", "personality.json")
+    personality_file = data.get("personality", "personality.json")
     alpha = float(data.get("alpha", 4e-3))
     color_space = data.get("color_space", "rgb")
     if color_space not in COLOR_SPACES:
         color_space = "rgb"
 
-    weights = load_personality_list(personality_path)
+    weights = load_personality_list(DATA_DIR / personality_file)
     np.random.seed(seed % (2**32 - 1))
     leaves = {}
     tree = _build_rich(0, min_depth, max_depth, dx, dy, weights, alpha, leaves)
@@ -367,7 +369,7 @@ def set_func():
         child_depth = nd + 1
         eff_max = max(meta["max_depth"] - child_depth, 2)
         eff_min = max(min(meta["min_depth"] - child_depth, eff_max - 1), 1)
-        weights = load_personality_list("personality.json")
+        weights = load_personality_list(DATA_DIR / "personality.json")
         new_children = []
         for _ in range(new_arity):
             np.random.seed(np.random.randint(0, 2**31))
@@ -412,7 +414,7 @@ def regenerate():
     eff_max = max(meta["max_depth"] - nd, 2)
     eff_min = max(min(meta["min_depth"] - nd, eff_max - 1), 1)
 
-    weights = load_personality_list("personality.json")
+    weights = load_personality_list(DATA_DIR / "personality.json")
     np.random.seed(seed % (2**32 - 1))
     new_subtree = _build_rich(
         0,

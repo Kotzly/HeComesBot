@@ -6,11 +6,11 @@ import subprocess
 import numpy as np
 from numpy.random import rand
 
-from build import get_random_function
+from artgen.tree import get_random_function
+from artgen.functions import generate_params
 from config import load_personality_list
-from functions import generate_params
 
-p = load_personality_list("personality.json")
+p = load_personality_list("data/personality.json")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN")
 
 if FFMPEG_BIN and not (FFMPEG_BIN + os.pathsep) in os.environ["PATH"]:

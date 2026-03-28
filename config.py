@@ -1,5 +1,8 @@
 import json
+import pathlib
 from collections import namedtuple
+
+_CONFIG_PATH = pathlib.Path(__file__).parent / "data" / "config.json"
 
 DEFAULT_PERSONALITY_DICT = {
     "circle": 0,
@@ -22,7 +25,7 @@ DEFAULT_PERSONALITY_DICT = {
 
 
 def _load_default_config():
-    with open("./config.json", "r") as config_file:
+    with open(_CONFIG_PATH, "r") as config_file:
         config = json.load(config_file)
     return config
 
@@ -31,7 +34,7 @@ config_tuple = namedtuple("config", [*_load_default_config().keys()])
 
 
 def load_default_config():
-    with open("./config.json", "r") as config_file:
+    with open(_CONFIG_PATH, "r") as config_file:
         config = json.load(config_file)
     return config_tuple(**config)
 

@@ -4,10 +4,10 @@ from os.path import join
 
 from PIL import Image
 
-from build import combine_image, make_background, make_text
-from command import parse_cmd_args
+from bot.image import combine_image, make_background, make_text
+from bot.command import parse_cmd_args
+from bot.utils import make_kwargs, makedirs
 from config import get_config
-from utils import make_kwargs, makedirs
 
 
 def rename_with_seed(filename, seed):
