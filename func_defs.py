@@ -201,3 +201,28 @@ def swap_phase_amplitude(a, b, axes=(1, 2)):
     phi_a = np.arctan2(np.imag(fft_a), np.real(fft_a))
     swapped_a = np.abs(fft_b) * (np.cos(phi_a) + np.sin(phi_a) * 1j)
     return np.abs(np.fft.ifft2(swapped_a, axes=axes)).astype(np.float32)
+
+
+# ── Circular hue functions (arity 2, HSV H-channel) ──────────────────────────
+
+
+def circular_mean(h1, h2):
+    """Mean of two hue values along the shorter arc."""
+    a1, a2 = h1 * (2 * np.pi), h2 * (2 * np.pi)
+    return (np.arctan2(np.sin(a1) + np.sin(a2), np.cos(a1) + np.cos(a2)) / (2 * np.pi)) % 1.0
+
+
+def circular_mean_far(h1, h2):
+    """Mean of two hue values along the longer arc."""
+    return (circular_mean(h1, h2) + 0.5) % 1.0
+
+
+def hue_diff(h1, h2):
+    """Angular distance between two hue values, in [0, 0.5]."""
+    diff = np.abs(h1 - h2) % 1.0
+    return np.minimum(diff, 1.0 - diff)
+
+
+def hue_rotate(h1, h2):
+    """Rotate h1 by h2 (circular addition)."""
+    return (h1 + h2) % 1.0
