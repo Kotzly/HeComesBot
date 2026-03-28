@@ -9,20 +9,23 @@ def rand_color(dx=None, dy=None):
     color = np.random.rand(1, 1, 3).astype(np.float32)
     return np.broadcast_to(color, (dy, dx, 3)).copy()
 
-def _rotated_gradient(dx, dy, angle=None):
-    """Linear gradient at a random angle, normalized to [0, 1], colored by a random RGB."""
+def _rotated_gradient(dx, dy, angle=None, color=None):
+    """Linear gradient at a random angle, colored by a random RGB."""
     if angle is None:
         angle = np.random.rand() * 2 * np.pi
-    color = np.random.rand(3).astype(np.float32)
+    if color is None:
+        color = np.random.rand(3).astype(np.float32)
+    else:
+        color = np.asarray(color, dtype=np.float32)
     x, y  = linear_mesh(dx=dx, dy=dy)
     grad  = np.cos(angle) * x + np.sin(angle) * y          # (dy, dx), range subset of [-2, 2]
     return (grad[:, :, np.newaxis] * color.reshape(1, 1, 3)).astype(np.float32)
 
-def x_var(dx=None, dy=None, angle=None):
-    return _rotated_gradient(dx, dy, angle=angle)
+def x_var(dx=None, dy=None, angle=None, color=None):
+    return _rotated_gradient(dx, dy, angle=angle, color=color)
 
-def y_var(dx=None, dy=None, angle=None):
-    return _rotated_gradient(dx, dy, angle=angle)
+def y_var(dx=None, dy=None, angle=None, color=None):
+    return _rotated_gradient(dx, dy, angle=angle, color=color)
 
 def linear_mesh(dx=None, dy=None):
     y = np.repeat(np.linspace(-1, 1, dy).reshape(-1, 1), dx, axis=1)
@@ -175,7 +178,8 @@ def kaleidoscope(x, n=None, phase=None):
 def generate_params(func_name):
     """Generate random params for functions that use internal randomness."""
     if func_name in ('x_var', 'y_var'):
-        return {'angle': float(np.random.rand() * 2 * np.pi)}
+        return {'angle': float(np.random.rand() * 2 * np.pi),
+                'color': np.random.rand(3).tolist()}
     if func_name == 'cone':
         cx, cy = random_point()
         rx, ry = random_radius()
@@ -213,9 +217,11 @@ FUNC_PARAMS = {
     ],
     'x_var': [
         {'name': 'angle', 'type': 'float', 'min': 0.0, 'max': 6.2832, 'label': 'Angle'},
+        {'name': 'color', 'type': 'color',                             'label': 'Color'},
     ],
     'y_var': [
         {'name': 'angle', 'type': 'float', 'min': 0.0, 'max': 6.2832, 'label': 'Angle'},
+        {'name': 'color', 'type': 'color',                             'label': 'Color'},
     ],
     'color_rotate': [
         {'name': 'angles', 'type': 'angles', 'label': 'Euler angles ZYX'},
