@@ -103,18 +103,19 @@
     </label>
     <button id="regen-btn" class="danger-btn">Regenerate</button>
 
+    <!-- Non-leaf param editor (shown for nodes with editable params) -->
+    <div id="node-params-editor" class="hidden">
+      <hr>
+      <h3>Parameters</h3>
+      <div id="node-params-controls"></div>
+      <button id="update-node-params-btn" class="primary-btn">Apply</button>
+    </div>
+
     <!-- Leaf editor (shown only for arity-0 nodes) -->
     <div id="leaf-editor" class="hidden">
       <hr>
       <h3>Leaf Values</h3>
       <div id="leaf-controls"></div>
-
-      <label id="delta-row">Animation delta
-        <div class="input-row">
-          <input type="range" id="delta-slider" min="-0.05" max="0.05" step="0.001" style="flex:1">
-          <input type="number" id="delta-num" step="0.001" style="width:70px">
-        </div>
-      </label>
 
       <button id="update-leaf-btn" class="primary-btn">Update Leaf</button>
     </div>
