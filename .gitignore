@@ -9,3 +9,5 @@ history/
 *.avi
 *.gif
 log.txt
+*.egg-info/
+.vscode/
