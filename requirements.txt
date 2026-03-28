@@ -1,5 +1,0 @@
-markovify
-numpy
-scipy
-Pillow
-flask
