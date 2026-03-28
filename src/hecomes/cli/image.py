@@ -7,7 +7,7 @@ from PIL import Image as PILImage
 from hecomes.artgen.functions import BUILD_FUNCTIONS, generate_params
 from hecomes.artgen.render import COLOR_SPACES, render_frame
 from hecomes.artgen.tree import get_random_function, random_delta
-from hecomes.config import DATA_DIR, load_personality_list
+from hecomes.config import PERSONALITIES_DIR, load_personality_list
 
 _FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
 
@@ -64,7 +64,7 @@ def _parse_args():
     parser.add_option("-c", "--color-space", dest="color_space", type=str, default="rgb",
                       help=f"Color space: {', '.join(COLOR_SPACES)}. Default: rgb.")
     parser.add_option("--personality", dest="personality", type=str, default=None,
-                      help="Personality JSON filename in data/. Default: personality.json.")
+                      help="Personality name in data/personalities/. Default: personality.")
     args, positional = parser.parse_args()
     output = positional[0] if positional else "output.png"
     return args, output
@@ -76,8 +76,8 @@ def main():
     seed = args.seed if args.seed is not None else int(np.random.randint(0, 2**31))
     color_space = args.color_space if args.color_space in COLOR_SPACES else "rgb"
 
-    personality_file = args.personality or "personality.json"
-    weights = load_personality_list(DATA_DIR / personality_file)
+    personality = args.personality or "personality"
+    weights = load_personality_list(PERSONALITIES_DIR / (personality + ".json"))
 
     np.random.seed(seed % (2**32 - 1))
     leaves = {}

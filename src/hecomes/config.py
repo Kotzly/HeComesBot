@@ -3,6 +3,7 @@ import pathlib
 from collections import namedtuple
 
 DATA_DIR = pathlib.Path(__file__).parent / "data"
+PERSONALITIES_DIR = DATA_DIR / "personalities"
 _CONFIG_PATH = DATA_DIR / "config.json"
 
 DEFAULT_PERSONALITY_DICT = {

@@ -15,7 +15,7 @@ from hecomes.artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_para
 from hecomes.artgen.pruning import PRUNE_METHODS, image_entropy
 from hecomes.artgen.render import COLOR_SPACES, render_frame
 from hecomes.artgen.tree import get_random_function, random_delta
-from hecomes.config import DATA_DIR, load_personality_list
+from hecomes.config import DATA_DIR, PERSONALITIES_DIR, load_personality_list
 
 SAVE_DIR = pathlib.Path("saved_trees")
 
@@ -152,7 +152,7 @@ def get_functions():
 @app.route("/api/personalities")
 def get_personalities():
     files = sorted(
-        f for f in os.listdir(DATA_DIR) if f.endswith(".json") and "personality" in f
+        f[:-5] for f in os.listdir(PERSONALITIES_DIR) if f.endswith(".json")
     )
     return jsonify(files)
 
@@ -172,13 +172,13 @@ def build():
     dy = int(data.get("height", 256))
     min_depth = int(data.get("min_depth", 4))
     max_depth = int(data.get("max_depth", 8))
-    personality_file = data.get("personality", "personality.json")
+    personality = data.get("personality", "personality")
     alpha = float(data.get("alpha", 4e-3))
     color_space = data.get("color_space", "rgb")
     if color_space not in COLOR_SPACES:
         color_space = "rgb"
 
-    weights = load_personality_list(DATA_DIR / personality_file)
+    weights = load_personality_list(PERSONALITIES_DIR / (personality + ".json"))
     np.random.seed(seed % (2**32 - 1))
     leaves = {}
     tree = _build_rich(0, min_depth, max_depth, dx, dy, weights, alpha, leaves)
@@ -195,6 +195,7 @@ def build():
             "max_depth": max_depth,
             "alpha": alpha,
             "color_space": color_space,
+            "personality": personality,
         },
     }
     return jsonify(
@@ -348,7 +349,7 @@ def set_func():
         child_depth = nd + 1
         eff_max = max(meta["max_depth"] - child_depth, 2)
         eff_min = max(min(meta["min_depth"] - child_depth, eff_max - 1), 1)
-        weights = load_personality_list(DATA_DIR / "personality.json")
+        weights = load_personality_list(PERSONALITIES_DIR / (meta.get("personality", "personality") + ".json"))
         new_children = []
         for _ in range(new_arity):
             np.random.seed(np.random.randint(0, 2**31))

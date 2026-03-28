@@ -9,7 +9,7 @@ from numpy.random import rand
 from hecomes.artgen.func_utils import hsv_to_rgb
 from hecomes.artgen.functions import generate_params
 from hecomes.artgen.tree import get_random_function, random_delta
-from hecomes.config import DATA_DIR, load_personality_list
+from hecomes.config import PERSONALITIES_DIR, load_personality_list
 
 RECOMMENDED_CODECS = {
     "mp4": "libopenh264",
@@ -133,13 +133,13 @@ def _parse_args():
                       help="Color space: rgb, hsv, cmy. Default: rgb.")
     parser.add_option("--independent-channels", dest="independent_channels",
                       action="store_true", default=False,
-                      help="Build one tree per channel (HSV: H uses personality_h.json, S/V use personality.json).")
+                      help="Build one tree per channel (HSV: H uses hsv personality, S/V use the main personality).")
     parser.add_option("--k", dest="k", action="store_true", default=False,
                       help="Generate K channel from a tree (CMY mode only).")
     parser.add_option("--alpha", dest="alpha", action="store_true", default=False,
                       help="Generate alpha channel from a tree.")
     parser.add_option("--personality", dest="personality", type=str, default=None,
-                      help="Personality JSON filename in data/. Default: personality.json.")
+                      help="Personality name in data/personalities/. Default: personality.")
     args, _ = parser.parse_args()
     return args
 
@@ -159,9 +159,9 @@ def main():
         print("Warning: --k is only meaningful in cmy mode, ignoring.")
         args.k = False
 
-    personality_file = args.personality or "personality.json"
-    p = load_personality_list(DATA_DIR / personality_file)
-    p_h = load_personality_list(DATA_DIR / "personality_h.json")
+    personality = args.personality or "personality"
+    p = load_personality_list(PERSONALITIES_DIR / (personality + ".json"))
+    p_h = load_personality_list(PERSONALITIES_DIR / "hsv.json")
 
     recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
     if args.codec is None:
