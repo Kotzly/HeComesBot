@@ -9,40 +9,14 @@ import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 from PIL import Image
 
-from artgen.func_utils import hsv_to_rgb
-from artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
-from artgen.tree import get_random_function
-from config import load_personality_list
-from video import random_delta
+from hecomesbot.artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
+from hecomesbot.artgen.render import COLOR_SPACES, render_frame
+from hecomesbot.artgen.tree import get_random_function, random_delta
+from hecomesbot.config import DATA_DIR, load_personality_list
 
-_ROOT = pathlib.Path(__file__).parent.parent
-DATA_DIR = _ROOT / "data"
-SAVE_DIR = _ROOT / "saved_trees"
+SAVE_DIR = pathlib.Path("saved_trees")
 
 app = Flask(__name__, static_folder="static", static_url_path="")
-COLOR_SPACES = ("rgb", "hsv", "cmy")
-
-
-def _render_frame(raw_batch, color_space, dx, dy):
-    """Convert a raw eval result (N, ?, ?, ?) to a displayable (dy, dx, 3) uint8 array."""
-    frame = np.broadcast_to(raw_batch[0], (dy, dx, raw_batch.shape[-1])).copy()
-    if color_space == "hsv":
-        hsv = np.stack(
-            [
-                frame[..., 0] % 1.0,
-                frame[..., 1].clip(0, 1),
-                frame[..., 2].clip(0, 1),
-            ],
-            axis=-1,
-        )
-        frame = hsv_to_rgb(hsv)
-    elif color_space == "cmy":
-        frame = 1.0 - frame.clip(0, 1)
-    else:
-        frame = frame.clip(0, 1)
-    if frame.shape[-1] != 3:
-        frame = frame[..., :3]
-    return np.rint(frame * 255).astype(np.uint8)
 
 
 FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
@@ -235,7 +209,7 @@ def preview():
     color_space = session["meta"].get("color_space", "rgb")
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     raw = _eval_rich(session["tree"], steps, session["leaves"])
-    img_8 = _render_frame(raw, color_space, dx, dy)
+    img_8 = render_frame(raw, color_space, dx, dy)
     buf = io.BytesIO()
     Image.fromarray(img_8).save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
@@ -298,7 +272,7 @@ def node_preview():
     color_space = session["meta"].get("color_space", "rgb")
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     raw = _eval_rich(node, steps, session["leaves"])
-    img_8 = _render_frame(raw, color_space, dx, dy)
+    img_8 = render_frame(raw, color_space, dx, dy)
     buf = io.BytesIO()
     Image.fromarray(img_8).save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
@@ -497,5 +471,9 @@ def set_node_params():
     return jsonify({"tree": session["tree"]})
 
 
-if __name__ == "__main__":
+def main():
     app.run(debug=True, port=5000, host="0.0.0.0")
+
+
+if __name__ == "__main__":
+    main()

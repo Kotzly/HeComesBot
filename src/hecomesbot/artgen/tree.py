@@ -2,7 +2,11 @@ from os.path import isfile
 
 import numpy as np
 
-from artgen.functions import BUILD_FUNCTIONS
+from hecomesbot.artgen.functions import BUILD_FUNCTIONS
+
+
+def random_delta(alpha=5e-3):
+    return np.random.choice([1, -1]) * alpha
 
 
 def log_tree_to_file(func, depth, log_filepath="tree.txt"):

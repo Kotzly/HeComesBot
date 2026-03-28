@@ -6,19 +6,22 @@ import subprocess
 import numpy as np
 from numpy.random import rand
 
-from artgen.tree import get_random_function
-from artgen.functions import generate_params
-from config import load_personality_list
+from hecomesbot.artgen.functions import generate_params
+from hecomesbot.artgen.tree import get_random_function, random_delta
+from hecomesbot.config import DATA_DIR, load_personality_list
 
-p = load_personality_list("data/personality.json")
-FFMPEG_BIN = os.getenv("FFMPEG_BIN")
+RECOMMENDED_CODECS = {
+    "mp4": "libopenh264",
+    "avi": "mpeg4",
+    "webm": "libvpx-vp9",
+    "mkv": "libopenh264",
+    "ogg": "libtheora",
+    "flv": "flv",
+    "mpeg": "mpeg2video",
+    "gif": "gif",
+}
 
-if FFMPEG_BIN and not (FFMPEG_BIN + os.pathsep) in os.environ["PATH"]:
-    os.environ["PATH"] = (FFMPEG_BIN + os.pathsep) + os.environ["PATH"]
-
-
-def random_delta(tensor, alpha=5e-3):
-    return np.random.choice([1, -1]) * alpha
+_tree = None
 
 
 def build_tree(
@@ -38,7 +41,7 @@ def build_tree(
                 return [n_args, func, args, params]
             else:
                 leaf = func(*args, **kwargs).astype(np.float32)
-                return [leaf, np.float32(random_delta(leaf, alpha))]
+                return [leaf, np.float32(random_delta(alpha))]
         except Exception as e:
             print(func.__name__, str(e))
             raise e
@@ -56,119 +59,54 @@ def eval_tree(tree, steps):
     return func(*args, **params)
 
 
-_tree = None
-
-
 def _compute_chunk(steps):
     frames = eval_tree(_tree, steps)
     return np.rint(frames.clip(0.0, 1.0) * 255.0).astype(np.uint8)
 
 
-def parse_cmd_args():
+def _parse_args():
     parser = optparse.OptionParser()
-    parser.add_option(
-        "-n",
-        "--n_videos",
-        dest="n_videos",
-        type=int,
-        default=1,
-        help="Number of videos. Default: 1.",
-    )
-    parser.add_option(
-        "-f", "--fps", dest="fps", type=int, default=30, help="FPS. Default: 30."
-    )
-    parser.add_option(
-        "-H",
-        "--height",
-        dest="height",
-        type=int,
-        default=256,
-        help="Video height. Default: 256.",
-    )
-    parser.add_option(
-        "-W",
-        "--width",
-        dest="width",
-        type=int,
-        default=256,
-        help="Video width. Default: 256.",
-    )
-    parser.add_option(
-        "-s",
-        "--step",
-        dest="step",
-        type=float,
-        default=0.003,
-        help="Alpha step for image generation. Default: 3e-3.",
-    )
-    parser.add_option(
-        "-d",
-        "--duration",
-        dest="duration",
-        type=int,
-        default=10,
-        help="Video duration. Default: 10.",
-    )
-    parser.add_option(
-        "-S", "--seed", dest="seed", type=int, default=None, help="Seed. Default: None."
-    )
-    parser.add_option(
-        "-e",
-        "--extension",
-        dest="ext",
-        type=str,
-        default="webm",
-        help="Extension. Can be webm, avi, mp4, gif, flv, ogg, mpeg. Default: webm.",
-    )
-    parser.add_option(
-        "-b",
-        "--bitrate",
-        dest="bitrate",
-        type=str,
-        default="6M",
-        help="Constant bitrate. Default: 6M.",
-    )
-    parser.add_option(
-        "-C",
-        "--codec",
-        dest="codec",
-        type=str,
-        default=None,
-        help="Video codec. Defaults to recommended codec for the chosen extension.",
-    )
-    parser.add_option(
-        "-c",
-        "--chunk_size",
-        dest="chunk_size",
-        type=int,
-        default=10,
-        help="Frames per batch. Lower values use less memory. Default: 10.",
-    )
-    parser.add_option(
-        "-p",
-        "--processes",
-        dest="n_process",
-        type=int,
-        default=3,
-        help="Number of parallel workers. Default: 3.",
-    )
+    parser.add_option("-n", "--n_videos", dest="n_videos", type=int, default=1,
+                      help="Number of videos. Default: 1.")
+    parser.add_option("-f", "--fps", dest="fps", type=int, default=30,
+                      help="FPS. Default: 30.")
+    parser.add_option("-H", "--height", dest="height", type=int, default=256,
+                      help="Video height. Default: 256.")
+    parser.add_option("-W", "--width", dest="width", type=int, default=256,
+                      help="Video width. Default: 256.")
+    parser.add_option("-s", "--step", dest="step", type=float, default=0.003,
+                      help="Alpha step for image generation. Default: 3e-3.")
+    parser.add_option("-d", "--duration", dest="duration", type=int, default=10,
+                      help="Video duration in seconds. Default: 10.")
+    parser.add_option("-S", "--seed", dest="seed", type=int, default=None,
+                      help="Seed. Default: None (random).")
+    parser.add_option("-e", "--extension", dest="ext", type=str, default="webm",
+                      help="Extension: webm, avi, mp4, gif, flv, ogg, mpeg. Default: webm.")
+    parser.add_option("-b", "--bitrate", dest="bitrate", type=str, default="6M",
+                      help="Constant bitrate. Default: 6M.")
+    parser.add_option("-C", "--codec", dest="codec", type=str, default=None,
+                      help="Video codec. Defaults to recommended for the chosen extension.")
+    parser.add_option("-c", "--chunk_size", dest="chunk_size", type=int, default=10,
+                      help="Frames per batch. Default: 10.")
+    parser.add_option("-p", "--processes", dest="n_process", type=int, default=3,
+                      help="Number of parallel workers. Default: 3.")
+    parser.add_option("--personality", dest="personality", type=str, default=None,
+                      help="Personality JSON filename in data/. Default: personality.json.")
     args, _ = parser.parse_args()
     return args
 
 
-RECOMMENDED_CODECS = {
-    "mp4": "libopenh264",
-    "avi": "mpeg4",
-    "webm": "libvpx-vp9",
-    "mkv": "libopenh264",
-    "ogg": "libtheora",
-    "flv": "flv",
-    "mpeg": "mpeg2video",
-    "gif": "gif",
-}
+def main():
+    global _tree
 
-if __name__ == "__main__":
-    args = parse_cmd_args()
+    ffmpeg_bin = os.getenv("FFMPEG_BIN")
+    if ffmpeg_bin and not (ffmpeg_bin + os.pathsep) in os.environ["PATH"]:
+        os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
+
+    args = _parse_args()
+
+    personality_file = args.personality or "personality.json"
+    p = load_personality_list(DATA_DIR / personality_file)
 
     recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
     if args.codec is None:
@@ -216,20 +154,11 @@ if __name__ == "__main__":
             else []
         )
         ffmpeg_cmd = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pixel_format",
-            "rgb24",
-            "-video_size",
-            f"{args.width}x{args.height}",
-            "-framerate",
-            str(args.fps),
-            "-i",
-            "pipe:0",
-            "-vcodec",
-            args.codec,
+            "ffmpeg", "-y", "-f", "rawvideo", "-pixel_format", "rgb24",
+            "-video_size", f"{args.width}x{args.height}",
+            "-framerate", str(args.fps),
+            "-i", "pipe:0",
+            "-vcodec", args.codec,
             *openh264_args,
             *bitrate_args,
             output_path,
@@ -251,3 +180,7 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             pass
         print(f"Done: {output_path}")
+
+
+if __name__ == "__main__":
+    main()

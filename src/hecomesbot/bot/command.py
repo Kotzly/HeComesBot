@@ -2,7 +2,7 @@ import json
 import optparse
 import time
 
-from config import config_tuple, load_default_config, load_personality_list
+from hecomesbot.config import config_tuple, load_default_config, load_personality_list
 
 
 def parse_sysargs(parser):

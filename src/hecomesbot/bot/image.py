@@ -5,7 +5,7 @@ import markovify
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from artgen.tree import get_random_function, log_tree_to_file
+from hecomesbot.artgen.tree import get_random_function, log_tree_to_file
 
 
 def random_sequence_length(max_length, min_length):

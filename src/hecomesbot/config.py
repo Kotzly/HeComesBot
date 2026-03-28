@@ -2,7 +2,8 @@ import json
 import pathlib
 from collections import namedtuple
 
-_CONFIG_PATH = pathlib.Path(__file__).parent / "data" / "config.json"
+DATA_DIR = pathlib.Path(__file__).parent / "data"
+_CONFIG_PATH = DATA_DIR / "config.json"
 
 DEFAULT_PERSONALITY_DICT = {
     "circle": 0,
