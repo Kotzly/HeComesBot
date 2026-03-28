@@ -9,13 +9,22 @@ def rand_color(dx=None, dy=None):
     color = np.random.rand(1, 1, 3).astype(np.float32)
     return np.broadcast_to(color, (dy, dx, 3)).copy()
 
+def _rotated_gradient(dx, dy):
+    """Linear gradient at a random angle, normalized to [0, 1], colored by a random RGB."""
+    angle = np.random.rand() * 2 * np.pi
+    color = np.random.rand(3).astype(np.float32)
+    x, y  = linear_mesh(dx=dx, dy=dy)
+    grad  = np.cos(angle) * x + np.sin(angle) * y          # (dy, dx), range subset of [-2, 2]
+    g_min, g_max = grad.min(), grad.max()
+    if g_max > g_min:
+        grad = (grad - g_min) / (g_max - g_min)            # normalize to [0, 1]
+    return (grad[:, :, np.newaxis] * color.reshape(1, 1, 3)).astype(np.float32)
+
 def x_var(dx=None, dy=None):
-    x = np.linspace(0., 1., dx, dtype=np.float32).reshape(1, dx, 1)
-    return np.broadcast_to(x, (dy, dx, 3)).copy()
+    return _rotated_gradient(dx, dy)
 
 def y_var(dx=None, dy=None):
-    y = np.linspace(0., 1., dy, dtype=np.float32).reshape(dy, 1, 1)
-    return np.broadcast_to(y, (dy, dx, 3)).copy()
+    return _rotated_gradient(dx, dy)
 
 def linear_mesh(dx=None, dy=None):
     y = np.repeat(np.linspace(-1, 1, dy).reshape(-1, 1), dx, axis=1)
