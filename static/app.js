@@ -148,11 +148,6 @@ async function init() {
     document.getElementById('regen-seed-input').value = randInt();
   });
 
-  const slider = document.getElementById('delta-slider');
-  const num    = document.getElementById('delta-num');
-  slider.addEventListener('input', () => { num.value = parseFloat(slider.value).toFixed(4); });
-  num.addEventListener('input',   () => { slider.value = num.value; });
-
   window.addEventListener('resize', () => { if (treeData) renderTree(); });
 
   buildLegend();
@@ -335,12 +330,11 @@ async function onUpdateLeaf() {
   const node = findNode(treeData, selectedId);
   if (!node || node.arity !== 0) return;
 
-  const delta  = parseFloat(document.getElementById('delta-num').value);
   const params = collectLeafParams(node.func);
 
   const res  = await fetch('/api/leaf/set-params', {
     method: 'POST', headers: jsonHdr(),
-    body: JSON.stringify({tree_id: treeId, node_id: selectedId, params, delta}),
+    body: JSON.stringify({tree_id: treeId, node_id: selectedId, params}),
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
@@ -478,11 +472,7 @@ function buildLeafEditor(node) {
   const controls = document.getElementById('leaf-controls');
   controls.innerHTML = '';
 
-  const delta = node.delta ?? 0;
-  document.getElementById('delta-slider').value = delta;
-  document.getElementById('delta-num').value    = delta.toFixed(4);
-
-  const p     = node.params || {};
+  const p = node.params || {};
   const specs = (funcParamsData || {})[node.func];
 
   if (node.func === 'rand_color') {
