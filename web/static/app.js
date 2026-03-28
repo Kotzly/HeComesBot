@@ -115,9 +115,8 @@ async function onFlatten() {
     });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
-    treeData        = data.tree;
-    sensitivityData = null;
-    selectedId      = data.new_node_id;
+    treeData   = data.tree;
+    selectedId = data.new_node_id;
     const node = findNode(treeData, selectedId);
     if (node) selectNode(node); else renderTree();
     updateStats(treeData);
