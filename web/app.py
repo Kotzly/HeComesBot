@@ -11,7 +11,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from PIL import Image
 
 from hecomes.artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
-from hecomes.artgen.pruning import PRUNE_METHODS
+from hecomes.artgen.pruning import PRUNE_METHODS, image_entropy
 from hecomes.artgen.render import COLOR_SPACES, render_frame
 from hecomes.artgen.tree import get_random_function, random_delta
 from hecomes.config import DATA_DIR, load_personality_list
@@ -557,6 +557,91 @@ def _prune_pass(subtree_root, leaves, dx, dy, color_space, method_fn, delta, thr
                 n_pruned += 1
 
     return n_pruned
+
+
+def _sensitivity_pass(subtree_root, leaves_copy, dx, dy, color_space, delta, alpha, result):
+    """Bottom-up: calculate sensitivity for each child, then simulate pruning to allow
+    higher nodes to be evaluated as if their children were already simplified."""
+    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    temp_id = "__sens_temp__"
+
+    original_raw = _eval_rich(subtree_root, steps, leaves_copy)
+    original_frame = render_frame(original_raw, color_space, dx, dy)
+
+    parents = []
+    _collect_parents_postorder(subtree_root, parents)
+
+    for parent in parents:
+        for i, child in enumerate(parent["children"]):
+            if child["func"] == "rand_color":
+                continue
+
+            child_raw = _eval_rich(child, steps, leaves_copy)
+            child_base = child_raw[0] if child_raw.ndim == 4 else child_raw
+
+            leaves_copy[temp_id] = {
+                "base": (child_base + np.float32(delta)).astype(np.float32),
+                "delta": np.float32(0), "func": "rand_color", "params": {},
+            }
+            temp_node = {"id": temp_id, "func": "rand_color", "arity": 0,
+                         "children": [], "delta": 0.0, "params": {}}
+            parent["children"][i] = temp_node
+
+            perturbed_raw = _eval_rich(subtree_root, steps, leaves_copy)
+            perturbed_frame = render_frame(perturbed_raw, color_space, dx, dy)
+
+            parent["children"][i] = child
+            del leaves_copy[temp_id]
+
+            result[child["id"]] = round(
+                abs(image_entropy(perturbed_frame) - image_entropy(original_frame)), 4
+            )
+
+            # Simulate pruning this child so higher nodes see simplified tree
+            child_frame = render_frame(child_raw, color_space, dx, dy)
+            mean_rgb = child_frame.mean(axis=(0, 1)) / 255.0
+            mean_color = _rgb_to_color_space(mean_rgb, color_space)
+            for lid in _collect_leaf_ids(child):
+                leaves_copy.pop(lid, None)
+            new_node, new_leaf = _make_rand_color_leaf(mean_color, dx, dy, alpha)
+            parent["children"][i] = new_node
+            leaves_copy[new_node["id"]] = new_leaf
+
+            # Recompute original frame with the simulated change
+            original_raw = _eval_rich(subtree_root, steps, leaves_copy)
+            original_frame = render_frame(original_raw, color_space, dx, dy)
+
+
+@app.route("/api/sensitivity", methods=["POST"])
+def sensitivity():
+    import json as _json
+    data = request.json
+    tree_id = data["tree_id"]
+    node_id = data["node_id"]
+    delta = float(data.get("delta", 0.05))
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({"error": "unknown tree_id"}), 404
+    node = _find_node(session["tree"], node_id)
+    if node is None:
+        return jsonify({"error": "unknown node_id"}), 404
+    if node["arity"] == 0:
+        return jsonify({"error": "cannot analyze a leaf node"}), 400
+
+    meta = session["meta"]
+    dx, dy = meta["dx"], meta["dy"]
+    color_space = meta.get("color_space", "rgb")
+    alpha = meta.get("alpha", 4e-3)
+
+    # Work on copies — do not modify the real session
+    tree_copy = _json.loads(_json.dumps(session["tree"]))
+    leaves_copy = {k: {**v, "base": v["base"].copy()} for k, v in session["leaves"].items()}
+    node_copy = _find_node(tree_copy, node_id)
+
+    result = {}
+    _sensitivity_pass(node_copy, leaves_copy, dx, dy, color_space, delta, alpha, result)
+    return jsonify(result)
 
 
 @app.route("/api/prune-methods")

@@ -1,12 +1,13 @@
 'use strict';
 
 // ── State ────────────────────────────────────────────────────────────────────
-let treeId        = null;
-let treeData      = null;
-let selectedId    = null;
-let collapsedIds  = new Set();
-let functionsData  = null;
-let funcParamsData = null;
+let treeId           = null;
+let treeData         = null;
+let selectedId       = null;
+let collapsedIds     = new Set();
+let functionsData    = null;
+let funcParamsData   = null;
+let sensitivityData  = null;
 
 // ── D3 setup ─────────────────────────────────────────────────────────────────
 const svg   = d3.select('#tree-svg');
@@ -101,6 +102,28 @@ async function fetchNodePreview(nodeId) {
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
+async function onSensitivity() {
+  if (!selectedId) return;
+  const btn = document.getElementById('sensitivity-btn');
+  btn.disabled = true; btn.textContent = 'Calculating…';
+  try {
+    const res = await fetch('/api/sensitivity', {
+      method: 'POST', headers: jsonHdr(),
+      body: JSON.stringify({
+        tree_id: treeId,
+        node_id: selectedId,
+        delta:   parseFloat(document.getElementById('prune-delta').value),
+      }),
+    });
+    const data = await res.json();
+    if (data.error) { alert(data.error); return; }
+    sensitivityData = data;
+    renderTree();
+  } finally {
+    btn.disabled = false; btn.textContent = 'Show Sensitivity';
+  }
+}
+
 async function onPrune() {
   if (!selectedId) return;
   const btn = document.getElementById('prune-btn');
@@ -120,7 +143,8 @@ async function onPrune() {
     });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
-    treeData = data.tree;
+    treeData        = data.tree;
+    sensitivityData = null;
     result.textContent = `Pruned ${data.pruned} node${data.pruned !== 1 ? 's' : ''}.`;
     const node = findNode(treeData, selectedId);
     if (node) selectNode(node); else renderTree();
@@ -174,6 +198,8 @@ async function init() {
   document.getElementById('regen-btn')             .addEventListener('click', onRegen);
   document.getElementById('update-leaf-btn')       .addEventListener('click', onUpdateLeaf);
   document.getElementById('update-node-params-btn').addEventListener('click', onUpdateNodeParams);
+  document.getElementById('sensitivity-btn')       .addEventListener('click', onSensitivity);
+  document.getElementById('clear-sensitivity-btn') .addEventListener('click', () => { sensitivityData = null; renderTree(); });
   document.getElementById('prune-btn')             .addEventListener('click', onPrune);
   document.getElementById('random-seed-btn')  .addEventListener('click', () => {
     document.getElementById('seed-input').value = randInt();
@@ -261,9 +287,10 @@ async function onLoad() {
 }
 
 function applyLoadedTree(data) {
-  treeId     = data.tree_id;
-  treeData   = data.tree;
-  selectedId = null;
+  treeId          = data.tree_id;
+  treeData        = data.tree;
+  selectedId      = null;
+  sensitivityData = null;
   collapsedIds.clear();
   const meta = data.meta || {};
   if (meta.seed      != null) document.getElementById('seed-input').value      = meta.seed;
@@ -351,8 +378,9 @@ async function onRegen() {
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
-  treeData   = data.tree;
-  selectedId = data.new_node_id;
+  treeData        = data.tree;
+  selectedId      = data.new_node_id;
+  sensitivityData = null;
   collapsedIds.clear();
   const node = findNode(treeData, selectedId);
   if (node) selectNode(node); else renderTree();
@@ -449,6 +477,18 @@ function renderTree() {
     .attr('dy', '0.35em')
     .attr('text-anchor', d => hasKids(d) ? 'end' : 'start')
     .text(d => d.data.func);
+
+  if (sensitivityData) {
+    nodeG.filter(d => sensitivityData[d.data.id] !== undefined)
+      .append('text')
+      .attr('class', 'sens-label')
+      .attr('y', -14)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '9px')
+      .attr('fill', '#f5a623')
+      .attr('pointer-events', 'none')
+      .text(d => sensitivityData[d.data.id].toFixed(3));
+  }
 }
 
 function visibleSubtree(node) {
