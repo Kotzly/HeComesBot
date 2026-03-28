@@ -6,6 +6,7 @@ import multiprocessing as mp
 from numpy.random import rand
 from config import load_personality_list
 from build import get_random_function
+from functions import generate_params
 p = load_personality_list("personality.json")
 FFMPEG_BIN = os.getenv("FFMPEG_BIN")
 
@@ -26,7 +27,8 @@ def build_tree(min_depth=5, max_depth=15, dx=100, dy=100, weights=None, seed=42,
         kwargs = dict(dx=dx, dy=dy) if n_args == 0 else {}
         try:
             if n_args != 0:
-                return [n_args, func, args]
+                params = generate_params(func.__name__)
+                return [n_args, func, args, params]
             else:
                 leaf = func(*args, **kwargs).astype(np.float32)
                 return [leaf, np.float32(random_delta(leaf, alpha))]
@@ -40,9 +42,10 @@ def eval_tree(tree, steps):
     if len(tree) == 2:
         base, delta = tree
         return base + delta * steps
-    _, func, branches = tree
+    _, func, branches = tree[:3]
+    params = tree[3] if len(tree) == 4 else {}
     args = [eval_tree(b, steps) for b in branches]
-    return func(*args)
+    return func(*args, **params)
 
 
 _tree = None

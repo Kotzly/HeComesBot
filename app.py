@@ -7,7 +7,7 @@ import os
 from flask import Flask, request, jsonify, send_from_directory
 from PIL import Image
 
-from functions import BUILD_FUNCTIONS, linear_mesh, hsv_to_rgb
+from functions import BUILD_FUNCTIONS, linear_mesh, hsv_to_rgb, generate_params, FUNC_PARAMS
 from build import get_random_function
 from config import load_personality_list
 from video import random_delta
@@ -88,8 +88,8 @@ def _build_leaf(func, dx, dy, alpha):
         params = {'cx': float(cx), 'cy': float(cy), 'rx': float(rx), 'ry': float(ry),
                   'color': color.tolist()}
     else:
-        base = func(dx=dx, dy=dy).astype(np.float32)
-        params = {}
+        params = generate_params(func.__name__)
+        base = func(dx=dx, dy=dy, **params).astype(np.float32)
     delta = np.float32(random_delta(alpha))
     return base, delta, params
 
@@ -105,7 +105,10 @@ def _recompute_leaf(func_name, params, dx, dy):
     if func_name == 'circle':
         return _circle_array(params['cx'], params['cy'], params['rx'], params['ry'],
                              params['color'], dx, dy)
-    return None  # x_var, y_var: fixed by grid dimensions
+    if func_name in ('x_var', 'y_var'):
+        _, f = FUNC_BY_NAME[func_name]
+        return f(dx=dx, dy=dy, angle=params['angle']).astype(np.float32)
+    return None
 
 
 # ── Tree helpers ──────────────────────────────────────────────────────────────
@@ -122,11 +125,12 @@ def _build_rich(depth, min_depth, max_depth, dx, dy, weights, alpha, leaves):
         leaves[nid] = {'base': base, 'delta': delta, 'func': func.__name__, 'params': params}
         return {'id': nid, 'func': func.__name__, 'arity': 0, 'children': [],
                 'delta': float(delta), 'params': params}
+    params = generate_params(func.__name__)
     children = [
         _build_rich(depth + 1, min_depth, max_depth, dx, dy, weights, alpha, leaves)
         for _ in range(n_args)
     ]
-    return {'id': nid, 'func': func.__name__, 'arity': n_args, 'children': children}
+    return {'id': nid, 'func': func.__name__, 'arity': n_args, 'children': children, 'params': params}
 
 
 def _eval_rich(node, steps, leaves):
@@ -135,7 +139,7 @@ def _eval_rich(node, steps, leaves):
         return leaf['base'] + leaf['delta'] * steps
     _, func = FUNC_BY_NAME[node['func']]
     args = [_eval_rich(c, steps, leaves) for c in node['children']]
-    return func(*args)
+    return func(*args, **node.get('params', {}))
 
 
 def _collect_leaf_ids(node):
@@ -341,6 +345,8 @@ def set_func():
             session['leaves'][node_id] = {'base': base, 'delta': delta,
                                           'func': func_name, 'params': params}
             node.update({'delta': float(delta), 'params': params})
+        else:
+            node['params'] = generate_params(func_name)
         return jsonify({'tree': session['tree']})
 
     # Arity is changing
@@ -369,8 +375,8 @@ def set_func():
                                 session['leaves'])
             new_children.append(child)
         node['children'] = new_children
+        node['params'] = generate_params(func_name)
         node.pop('delta', None)
-        node.pop('params', None)
 
     return jsonify({'tree': session['tree']})
 
@@ -447,6 +453,30 @@ def set_leaf_params():
         leaf['delta'] = np.float32(new_delta)
         node['delta'] = float(new_delta)
 
+    return jsonify({'tree': session['tree']})
+
+
+@app.route('/api/function-params')
+def get_function_params():
+    return jsonify(FUNC_PARAMS)
+
+
+@app.route('/api/node/set-params', methods=['POST'])
+def set_node_params():
+    data = request.json
+    tree_id = data['tree_id']
+    node_id = data['node_id']
+    new_params = data.get('params', {})
+
+    session = _sessions.get(tree_id)
+    if session is None:
+        return jsonify({'error': 'unknown tree_id'}), 404
+
+    node = _find_node(session['tree'], node_id)
+    if node is None or node['arity'] == 0:
+        return jsonify({'error': 'node not found or is a leaf'}), 404
+
+    node['params'] = {**node.get('params', {}), **new_params}
     return jsonify({'tree': session['tree']})
 
 

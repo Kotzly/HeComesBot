@@ -18,11 +18,11 @@ def _rotated_gradient(dx, dy, angle=None):
     grad  = np.cos(angle) * x + np.sin(angle) * y          # (dy, dx), range subset of [-2, 2]
     return (grad[:, :, np.newaxis] * color.reshape(1, 1, 3)).astype(np.float32)
 
-def x_var(dx=None, dy=None):
-    return _rotated_gradient(dx, dy)
+def x_var(dx=None, dy=None, angle=None):
+    return _rotated_gradient(dx, dy, angle=angle)
 
-def y_var(dx=None, dy=None):
-    return _rotated_gradient(dx, dy)
+def y_var(dx=None, dy=None, angle=None):
+    return _rotated_gradient(dx, dy, angle=angle)
 
 def linear_mesh(dx=None, dy=None):
     y = np.repeat(np.linspace(-1, 1, dy).reshape(-1, 1), dx, axis=1)
@@ -70,9 +70,11 @@ def mirrored_sigmoid(x):
 def absolute_value(x):
     return np.abs(x)
 
-def color_rotate(x):
+def color_rotate(x, angles=None):
+    if angles is None:
+        angles = (np.random.rand(3) * 2 * np.pi).tolist()
     if x.shape[-1] == 3:
-        rot = R.from_euler("zyx", np.random.rand(3)*2*np.pi)
+        rot = R.from_euler("zyx", angles)
         return rot.apply(x.reshape(-1, 3)).reshape(x.shape)
     else:
         return np.random.rand(*x.shape)
@@ -144,15 +146,17 @@ def _kaleidoscope_frame(image, points, new_points):
     new_channels = np.concatenate([f(new_points).reshape(-1, 1) for f in interp_funcs], axis=1)
     return new_channels.reshape(dx, dy, 3).astype(np.float32)
 
-def kaleidoscope(x):
+def kaleidoscope(x, n=None, phase=None):
     image = x[0]
     if not is_valid_shape(image):
         return x
-    p = np.array([1, 1, .75, .6, .45])
-    p /= p.sum()
-    n = np.random.choice([3, 5, 6, 7, 8], p=p)
+    if n is None:
+        p = np.array([1, 1, .75, .6, .45])
+        p /= p.sum()
+        n = int(np.random.choice([3, 5, 6, 7, 8], p=p))
     phi = 2 * np.pi / n
-    phase = np.random.rand() * phi
+    if phase is None:
+        phase = float(np.random.rand() * phi)
 
     dx, dy, _ = image.shape
     angles = np.arctan2(-linear_mesh(dy, dx)[1], linear_mesh(dy, dx)[0])
@@ -162,6 +166,39 @@ def kaleidoscope(x):
     new_points = np.concatenate([(angles % phi + phase).reshape(-1, 1), radiuses.reshape(-1, 1)], axis=1)
 
     return np.stack([_kaleidoscope_frame(x[i], points, new_points) for i in range(x.shape[0])])
+
+def generate_params(func_name):
+    """Generate random params for functions that use internal randomness."""
+    if func_name in ('x_var', 'y_var'):
+        return {'angle': float(np.random.rand() * 2 * np.pi)}
+    if func_name == 'color_rotate':
+        return {'angles': (np.random.rand(3) * 2 * np.pi).tolist()}
+    if func_name == 'kaleidoscope':
+        p = np.array([1, 1, .75, .6, .45])
+        p /= p.sum()
+        n = int(np.random.choice([3, 5, 6, 7, 8], p=p))
+        phi = 2 * np.pi / n
+        return {'n': n, 'phase': float(np.random.rand() * phi)}
+    return {}
+
+
+# Param specs for the web UI: maps func_name -> list of param descriptors
+FUNC_PARAMS = {
+    'x_var': [
+        {'name': 'angle', 'type': 'float', 'min': 0.0, 'max': 6.2832, 'label': 'Angle'},
+    ],
+    'y_var': [
+        {'name': 'angle', 'type': 'float', 'min': 0.0, 'max': 6.2832, 'label': 'Angle'},
+    ],
+    'color_rotate': [
+        {'name': 'angles', 'type': 'angles', 'label': 'Euler angles ZYX'},
+    ],
+    'kaleidoscope': [
+        {'name': 'n',     'type': 'int',   'choices': [3, 5, 6, 7, 8], 'label': 'Segments'},
+        {'name': 'phase', 'type': 'float', 'min': 0.0, 'max': 6.2832,  'label': 'Phase'},
+    ],
+}
+
 
 BUILD_FUNCTIONS = ((0, rand_color),
                    (0, x_var),
