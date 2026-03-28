@@ -79,10 +79,11 @@ def cone(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
 
 
 def _gen_cone():
-    cx, cy = random_point()
     rx, ry = random_radius()
+    cx = float(np.random.uniform(-(1 + rx), 1 + rx))
+    cy = float(np.random.uniform(-(1 + ry), 1 + ry))
     return {
-        "cx": float(cx), "cy": float(cy),
+        "cx": cx, "cy": cy,
         "rx": float(rx), "ry": float(ry),
         "color": np.random.rand(3).tolist(),
     }
@@ -119,23 +120,23 @@ def sphere(dx=None, dy=None, cx=None, cy=None, rx=None, ry=None, color=None):
 
 
 def _gen_sphere():
-    cx, cy = random_point()
     rx, ry = random_radius()
+    cx = float(np.random.uniform(-(1 + rx), 1 + rx))
+    cy = float(np.random.uniform(-(1 + ry), 1 + ry))
     return {
-        "cx": float(cx), "cy": float(cy),
+        "cx": cx, "cy": cy,
         "rx": float(rx), "ry": float(ry),
         "color": np.random.rand(3).tolist(),
     }
 
 
 def _gen_circle():
-    cx, cy = random_point()
     rx, ry = random_radius()
+    cx = float(np.random.uniform(-(1 + rx), 1 + rx))
+    cy = float(np.random.uniform(-(1 + ry), 1 + ry))
     return {
-        "cx": float(cx),
-        "cy": float(cy),
-        "rx": float(rx),
-        "ry": float(ry),
+        "cx": cx, "cy": cy,
+        "rx": float(rx), "ry": float(ry),
         "color": np.random.rand(3).tolist(),
     }
 
