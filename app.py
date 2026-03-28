@@ -47,24 +47,14 @@ for _arity in FUNCS_BY_ARITY:
 
 def _build_leaf(func, dx, dy, alpha):
     """Build a leaf array and capture editable params."""
-    fname = func.__name__
-    if fname == 'rand_color':
-        color = np.random.rand(3).astype(np.float32)
-        base = np.broadcast_to(color.reshape(1, 1, 3), (dy, dx, 3)).copy()
-        params = {'color': color.tolist()}
-    else:
-        params = generate_params(fname)
-        base = func(dx=dx, dy=dy, **params).astype(np.float32)
-    delta = np.float32(random_delta(alpha))
+    params = generate_params(func.__name__)
+    base   = func(dx=dx, dy=dy, **params).astype(np.float32)
+    delta  = np.float32(random_delta(alpha))
     return base, delta, params
 
 
 def _recompute_leaf(func_name, params, dx, dy):
     """Recompute leaf base array from stored params."""
-    if func_name == 'rand_color':
-        return np.broadcast_to(
-            np.array(params['color'], dtype=np.float32).reshape(1, 1, 3), (dy, dx, 3)
-        ).copy()
     _, f = FUNC_BY_NAME[func_name]
     return f(dx=dx, dy=dy, **params).astype(np.float32)
 
