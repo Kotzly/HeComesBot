@@ -75,10 +75,21 @@
       <label id="auto-update-label">
         <input type="checkbox" id="auto-update-chk"> Auto-update
       </label>
-      <button id="flatten-btn" class="secondary-btn">Flatten to Color</button>
+      <button id="undo-btn" class="secondary-btn" disabled>Undo</button>
+      <button id="flatten-btn" class="danger-btn">Flatten to Color</button>
       <button id="set-reference-btn" class="secondary-btn">Set Reference</button>
       <button id="clear-reference-btn" class="secondary-btn">Clear Reference</button>
       <span id="reference-toolbar" class="hidden muted">Ref: <span id="reference-id-display" class="mono"></span></span>
+      <div id="prune-toolbar-group">
+        <span class="toolbar-label">Prune:</span>
+        <select id="prune-method-select"></select>
+        <label class="toolbar-label">δ <input type="number" id="prune-delta"     value="0.05" step="0.01" min="0"></label>
+        <label class="toolbar-label">τ <input type="number" id="prune-threshold" value="0.1"  step="0.01" min="0"></label>
+        <button id="sensitivity-btn"      class="secondary-btn">Sensitivity</button>
+        <button id="clear-sensitivity-btn" class="secondary-btn">Clear</button>
+        <button id="prune-btn"            class="danger-btn">Prune</button>
+        <span id="prune-result" class="muted"></span>
+      </div>
     </div>
     <svg id="tree-svg"></svg>
     <div id="tree-hint">Build a tree to visualize it.<br>
@@ -118,22 +129,6 @@
       <hr>
       <h3>Parameters</h3>
       <div id="node-params-controls"></div>
-      <button id="update-node-params-btn" class="primary-btn">Apply</button>
-    </div>
-
-    <!-- Prune editor (shown only for non-leaf nodes) -->
-    <div id="prune-editor" class="hidden">
-      <hr>
-      <h3>Prune Subtree</h3>
-      <label>Method <select id="prune-method-select"></select></label>
-      <label>Delta  <input type="number" id="prune-delta"     value="0.05" step="0.01" min="0"></label>
-      <label>Threshold <input type="number" id="prune-threshold" value="0.1"  step="0.01" min="0"></label>
-      <div class="input-row">
-        <button id="sensitivity-btn" class="secondary-btn">Show Sensitivity</button>
-        <button id="clear-sensitivity-btn" class="secondary-btn">Clear</button>
-      </div>
-      <button id="prune-btn" class="danger-btn">Prune</button>
-      <div id="prune-result" class="muted"></div>
     </div>
 
     <!-- Leaf editor (shown only for arity-0 nodes) -->

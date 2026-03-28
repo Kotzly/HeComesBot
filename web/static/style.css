@@ -72,6 +72,35 @@ body {
 #reference-toolbar { font-size: 12px; }
 #reference-toolbar.hidden { display: none; }
 
+#prune-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-left: 1px solid #3c3c3c;
+  flex-wrap: wrap;
+}
+
+#prune-toolbar-group input[type="number"] {
+  width: 56px;
+  padding: 2px 4px;
+}
+
+#prune-toolbar-group select {
+  width: auto;
+  padding: 2px 4px;
+}
+
+.toolbar-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  color: #999;
+  font-size: 12px;
+  margin: 0;
+}
+
 #tree-svg { flex: 1; width: 100%; display: block; }
 
 #tree-hint {

@@ -104,6 +104,32 @@ async function fetchNodePreview(nodeId) {
 
 // ── Pruning ───────────────────────────────────────────────────────────────────
 
+function _setUndoEnabled(enabled) {
+  document.getElementById('undo-btn').disabled = !enabled;
+}
+
+async function onUndo() {
+  if (!treeId) return;
+  const btn = document.getElementById('undo-btn');
+  btn.disabled = true; btn.textContent = 'Undoing…';
+  try {
+    const res = await fetch('/api/undo', {
+      method: 'POST', headers: jsonHdr(),
+      body: JSON.stringify({tree_id: treeId}),
+    });
+    const data = await res.json();
+    if (data.error) { _setUndoEnabled(false); return; }
+    treeData = data.tree;
+    sensitivityData = null;
+    const node = selectedId ? findNode(treeData, selectedId) : null;
+    if (node) selectNode(node); else renderTree();
+    updateStats(treeData);
+    _setUndoEnabled(true);
+  } finally {
+    btn.textContent = 'Undo';
+  }
+}
+
 async function onFlatten() {
   if (!selectedId) return;
   const btn = document.getElementById('flatten-btn');
@@ -120,6 +146,7 @@ async function onFlatten() {
     const node = findNode(treeData, selectedId);
     if (node) selectNode(node); else renderTree();
     updateStats(treeData);
+    _setUndoEnabled(true);
     if (sensitivityData) await fetchSensitivity();
   } finally {
     btn.disabled = false; btn.textContent = 'Flatten to Color';
@@ -201,6 +228,7 @@ async function onPrune() {
     treeData        = data.tree;
     sensitivityData = null;
     result.textContent = `Pruned ${data.pruned} node${data.pruned !== 1 ? 's' : ''}.`;
+    _setUndoEnabled(true);
     const node = findNode(treeData, selectedId);
     if (node) selectNode(node); else renderTree();
     updateStats(treeData);
@@ -252,10 +280,10 @@ async function init() {
   document.getElementById('apply-func-btn')        .addEventListener('click', onApplyFunc);
   document.getElementById('regen-btn')             .addEventListener('click', onRegen);
   document.getElementById('update-leaf-btn')       .addEventListener('click', onUpdateLeaf);
-  document.getElementById('update-node-params-btn').addEventListener('click', onUpdateNodeParams);
   document.getElementById('sensitivity-btn')       .addEventListener('click', onSensitivity);
   document.getElementById('clear-sensitivity-btn') .addEventListener('click', () => { sensitivityData = null; renderTree(); });
   document.getElementById('flatten-btn')           .addEventListener('click', onFlatten);
+  document.getElementById('undo-btn')              .addEventListener('click', onUndo);
   document.getElementById('set-reference-btn')     .addEventListener('click', onSetReference);
   document.getElementById('clear-reference-btn')   .addEventListener('click', onClearReference);
   document.getElementById('prune-btn')             .addEventListener('click', onPrune);
@@ -352,6 +380,7 @@ function applyLoadedTree(data) {
   sensitivityData = null;
   collapsedIds.clear();
   _updateReferenceBar();
+  _setUndoEnabled(false);
   const meta = data.meta || {};
   if (meta.seed      != null) document.getElementById('seed-input').value      = meta.seed;
   if (meta.dx        != null) document.getElementById('width-input').value     = meta.dx;
@@ -461,6 +490,7 @@ async function onUpdateLeaf() {
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
   treeData = data.tree;
+  _setUndoEnabled(true);
   const updated = findNode(treeData, selectedId);
   if (updated) {
     selectNode(updated);
@@ -659,6 +689,12 @@ function buildNodeParamEditor(node) {
       ['Z', 'Y', 'X'].forEach((axis, i) => {
         controls.appendChild(makeSliderRow(`${spec.label} ${axis}`, `np-${spec.name}-${i}`, 0, 6.2832, 0.01, angles[i]));
       });
+    }
+  });
+
+  controls.addEventListener('input', () => {
+    if (document.getElementById('auto-update-chk').checked) {
+      onUpdateNodeParams();
     }
   });
 }

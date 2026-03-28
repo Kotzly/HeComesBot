@@ -1,6 +1,7 @@
 import base64
 import colorsys
 import io
+import json as _json
 import os
 import pathlib
 import pickle
@@ -435,6 +436,7 @@ def set_leaf_params():
         return jsonify({"error": "leaf data missing"}), 500
 
     meta = session["meta"]
+    _push_undo(session)
 
     if new_params:
         merged = {**leaf.get("params", {}), **new_params}
@@ -495,6 +497,7 @@ def flatten_node():
     dx, dy = meta["dx"], meta["dy"]
     color_space = meta.get("color_space", "rgb")
     alpha = meta.get("alpha", 4e-3)
+    _push_undo(session)
 
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     raw = _eval_rich(node, steps, session["leaves"])
@@ -515,6 +518,19 @@ def flatten_node():
 
     session["leaves"][new_node["id"]] = new_leaf
     return jsonify({"tree": session["tree"], "new_node_id": new_node["id"]})
+
+
+_UNDO_LIMIT = 20
+
+
+def _push_undo(session):
+    stack = session.setdefault("_undo_stack", [])
+    stack.append({
+        "tree":   _json.loads(_json.dumps(session["tree"])),
+        "leaves": {k: {**v, "base": v["base"].copy()} for k, v in session["leaves"].items()},
+    })
+    if len(stack) > _UNDO_LIMIT:
+        stack.pop(0)
 
 
 def _make_rand_color_leaf(mean_color, dx, dy, alpha):
@@ -673,7 +689,6 @@ def _compute_sensitivity(tree_root, leaves, dx, dy, color_space, delta):
 
 @app.route("/api/sensitivity", methods=["POST"])
 def sensitivity():
-    import json as _json
     data = request.json
     tree_id = data["tree_id"]
     delta = float(data.get("delta", 0.05))
@@ -699,6 +714,21 @@ def sensitivity():
         root_copy = tree_copy
 
     return jsonify(_compute_sensitivity(root_copy, leaves_copy, dx, dy, color_space, delta))
+
+
+@app.route("/api/undo", methods=["POST"])
+def undo():
+    data = request.json
+    session = _sessions.get(data["tree_id"])
+    if session is None:
+        return jsonify({"error": "unknown tree_id"}), 404
+    stack = session.get("_undo_stack", [])
+    if not stack:
+        return jsonify({"error": "nothing to undo"}), 400
+    snapshot = stack.pop()
+    session["tree"]   = snapshot["tree"]
+    session["leaves"] = snapshot["leaves"]
+    return jsonify({"tree": session["tree"]})
 
 
 @app.route("/api/prune-methods")
@@ -734,6 +764,7 @@ def prune():
     color_space = meta.get("color_space", "rgb")
     alpha = meta.get("alpha", 4e-3)
 
+    _push_undo(session)
     total_pruned = 0
     while True:
         n = _prune_pass(node, session["leaves"], dx, dy, color_space, method_fn, delta, threshold, alpha)
