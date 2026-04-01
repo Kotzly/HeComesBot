@@ -58,9 +58,7 @@ def load_personality_dict(path):
 
 
 def load_personality_list(path):
+    from hecomes.artgen.functions import FUNCTION_REGISTRY
     personality_dict = load_personality_dict(path)
-    personality_list = [(name, personality_dict[name]) for name in personality_dict]
-    personality_list = [
-        weight for name, weight in sorted(personality_list, key=lambda x: x[0])
-    ]
-    return personality_list
+    sorted_names = sorted(fd.func.__name__ for fd in FUNCTION_REGISTRY)
+    return [personality_dict.get(name, 0) for name in sorted_names]

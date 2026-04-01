@@ -4,7 +4,8 @@
         "x_var": 1,
         "y_var": 1,
         "circle": 0.2,
-        "cone": 0.2
+        "cone": 0.2,
+        "sphere": 0.2
     },
     "1": {
         "cos": 1,
