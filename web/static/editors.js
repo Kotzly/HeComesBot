@@ -52,7 +52,7 @@ export function collectLeafParams(func) {
 
 export async function onUpdateLeaf() {
   if (!state.selectedId) return;
-  const node = _findNode(state.treeData, state.selectedId);
+  const node = _findNode(state.nodes, state.selectedId);
   if (!node || node.arity !== 0) return;
 
   const params = collectLeafParams(node.func);
@@ -62,9 +62,10 @@ export async function onUpdateLeaf() {
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
-  state.treeData = data.tree;
+  state.nodes = data.nodes;
+  if (data.root_id) state.rootId = data.root_id;
   setUndoEnabled(true);
-  const updated = _findNode(state.treeData, state.selectedId);
+  const updated = _findNode(state.nodes, state.selectedId);
   if (updated) {
     selectNodeCallback(updated);
     scheduleNodePreview(state.selectedId);
@@ -115,7 +116,7 @@ export function collectNodeParams(funcName) {
 
 export async function onUpdateNodeParams() {
   if (!state.selectedId) return;
-  const node = _findNode(state.treeData, state.selectedId);
+  const node = _findNode(state.nodes, state.selectedId);
   if (!node || node.arity === 0) return;
 
   const params = collectNodeParams(node.func);
@@ -125,8 +126,9 @@ export async function onUpdateNodeParams() {
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
-  state.treeData = data.tree;
-  const updated = _findNode(state.treeData, state.selectedId);
+  state.nodes = data.nodes;
+  if (data.root_id) state.rootId = data.root_id;
+  const updated = _findNode(state.nodes, state.selectedId);
   if (updated) {
     selectNodeCallback(updated);
     scheduleNodePreview(state.selectedId);

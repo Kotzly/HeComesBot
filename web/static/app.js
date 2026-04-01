@@ -65,11 +65,12 @@ async function onUndo() {
     });
     const data = await res.json();
     if (data.error) { _setUndoEnabled(false); return; }
-    state.treeData = data.tree;
+    state.nodes = data.nodes;
+    state.rootId = data.root_id;
     state.sensitivityData = null;
-    const node = state.selectedId ? findNode(state.treeData, state.selectedId) : null;
+    const node = state.selectedId ? findNode(state.nodes, state.selectedId) : null;
     if (node) selectNode(node); else renderTree();
-    updateStats(state.treeData);
+    updateStats(state.rootId, state.nodes);
     _setUndoEnabled(true);
   } finally {
     btn.textContent = 'Undo';
@@ -87,11 +88,12 @@ async function onFlatten() {
     });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
-    state.treeData   = data.tree;
+    state.nodes      = data.nodes;
+    state.rootId     = data.root_id;
     state.selectedId = data.new_node_id;
-    const node = findNode(state.treeData, state.selectedId);
+    const node = findNode(state.nodes, state.selectedId);
     if (node) selectNode(node); else renderTree();
-    updateStats(state.treeData);
+    updateStats(state.rootId, state.nodes);
     _setUndoEnabled(true);
     if (state.sensitivityData) await fetchSensitivity();
   } finally {
@@ -171,13 +173,14 @@ async function onPrune() {
     });
     const data = await res.json();
     if (data.error) { alert(data.error); return; }
-    state.treeData        = data.tree;
+    state.nodes           = data.nodes;
+    state.rootId          = data.root_id;
     state.sensitivityData = null;
     result.textContent = `Pruned ${data.pruned} node${data.pruned !== 1 ? 's' : ''}.`;
     _setUndoEnabled(true);
-    const node = findNode(state.treeData, state.selectedId);
+    const node = findNode(state.nodes, state.selectedId);
     if (node) selectNode(node); else renderTree();
-    updateStats(state.treeData);
+    updateStats(state.rootId, state.nodes);
   } finally {
     btn.disabled = false; btn.textContent = 'Prune';
   }
@@ -220,7 +223,8 @@ async function onLoad() {
 
 function applyLoadedTree(data) {
   state.treeId          = data.tree_id;
-  state.treeData        = data.tree;
+  state.rootId          = data.root_id;
+  state.nodes           = data.nodes;
   state.selectedId      = null;
   state.referenceId     = null;
   state.sensitivityData = null;
@@ -242,7 +246,7 @@ function applyLoadedTree(data) {
 
   renderTree();
   fitTree();
-  updateStats(state.treeData);
+  updateStats(state.rootId, state.nodes);
 }
 
 // ── Build ─────────────────────────────────────────────────────────────────────
@@ -296,10 +300,11 @@ async function onApplyFunc() {
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
-  state.treeData = data.tree;
-  const node = findNode(state.treeData, state.selectedId);
+  state.nodes = data.nodes;
+  state.rootId = data.root_id;
+  const node = findNode(state.nodes, state.selectedId);
   if (node) selectNode(node); else renderTree();
-  updateStats(state.treeData);
+  updateStats(state.rootId, state.nodes);
 }
 
 async function onRegen() {
@@ -311,13 +316,14 @@ async function onRegen() {
   });
   const data = await res.json();
   if (data.error) { alert(data.error); return; }
-  state.treeData        = data.tree;
+  state.nodes           = data.nodes;
+  state.rootId          = data.root_id;
   state.selectedId      = data.new_node_id;
   state.sensitivityData = null;
   state.collapsedIds.clear();
-  const node = findNode(state.treeData, state.selectedId);
+  const node = findNode(state.nodes, state.selectedId);
   if (node) selectNode(node); else renderTree();
-  updateStats(state.treeData);
+  updateStats(state.rootId, state.nodes);
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -381,7 +387,7 @@ async function init() {
     document.getElementById('regen-seed-input').value = randInt();
   });
 
-  window.addEventListener('resize', () => { if (state.treeData) renderTree(); });
+  window.addEventListener('resize', () => { if (state.nodes) renderTree(); });
 
   buildLegend();
   await refreshTreeList();

@@ -224,11 +224,11 @@ BUILD_FUNCTIONS = sorted(
     key=lambda x: x[1].__name__,
 )
 
-_REGISTRY_BY_NAME = {fd.func.__name__: fd for fd in FUNCTION_REGISTRY}
+REGISTRY_BY_NAME = {fd.func.__name__: fd for fd in FUNCTION_REGISTRY}
 
 
 def generate_params(func_name):
-    fd = _REGISTRY_BY_NAME.get(func_name)
+    fd = REGISTRY_BY_NAME.get(func_name)
     if fd and fd.generate:
         return fd.generate()
     return {}

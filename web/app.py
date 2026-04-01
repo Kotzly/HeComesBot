@@ -1,7 +1,6 @@
 import base64
 import colorsys
 import io
-import json as _json
 import os
 import pathlib
 import pickle
@@ -11,11 +10,21 @@ import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 from PIL import Image
 
-from hecomes.artgen.functions import BUILD_FUNCTIONS, FUNC_PARAMS, generate_params
+from hecomes.artgen.functions import FUNCTION_REGISTRY, FUNC_PARAMS, REGISTRY_BY_NAME
 from hecomes.artgen.pruning import PRUNE_METHODS, image_entropy
 from hecomes.artgen.render import COLOR_SPACES, render_frame
-from hecomes.artgen.tree import get_random_function, random_delta
-from hecomes.config import DATA_DIR, PERSONALITIES_DIR, load_personality_list
+from hecomes.artgen.tree import (
+    Node,
+    build_node,
+    collect_leaf_ids,
+    eval_node,
+    find_parent,
+    node_depth,
+    nodes_from_dict,
+    nodes_to_dict,
+    random_delta,
+)
+from hecomes.config import PERSONALITIES_DIR, load_personality_list
 
 SAVE_DIR = pathlib.Path("saved_trees")
 
@@ -23,117 +32,199 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 
 _sessions = {}
 
-
-FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
 FUNCS_BY_ARITY = {}
-for _n, _f in BUILD_FUNCTIONS:
-    FUNCS_BY_ARITY.setdefault(_n, []).append(_f.__name__)
+for _fd in FUNCTION_REGISTRY:
+    FUNCS_BY_ARITY.setdefault(_fd.arity, []).append(_fd.func.__name__)
 for _arity in FUNCS_BY_ARITY:
     FUNCS_BY_ARITY[_arity].sort()
 
 
-def _build_leaf(func, dx, dy, alpha):
-    """Build a leaf array and capture editable params."""
-    params = generate_params(func.__name__)
-    base = func(dx=dx, dy=dy, **params).astype(np.float32)
-    delta = np.float32(random_delta(alpha))
-    return base, delta, params
-
-
-def _recompute_leaf(func_name, params, dx, dy):
-    """Recompute leaf base array from stored params."""
-    _, f = FUNC_BY_NAME[func_name]
-    return f(dx=dx, dy=dy, **params).astype(np.float32)
-
-
-# ── Tree helpers ──────────────────────────────────────────────────────────────
+# ── Session helpers ────────────────────────────────────────────────────────────
 
 
 def _new_id():
     return str(uuid.uuid4())[:8]
 
 
-def _build_rich(depth, min_depth, max_depth, dx, dy, weights, alpha, leaves):
-    n_args, func = get_random_function(
-        depth, p=weights, min_depth=min_depth, max_depth=max_depth
-    )
-    nid = _new_id()
-    if n_args == 0:
-        base, delta, params = _build_leaf(func, dx, dy, alpha)
-        leaves[nid] = {
-            "base": base,
-            "delta": delta,
-            "func": func.__name__,
-            "params": params,
-        }
-        return {
-            "id": nid,
-            "func": func.__name__,
-            "arity": 0,
-            "children": [],
-            "delta": float(delta),
-            "params": params,
-        }
-    params = generate_params(func.__name__)
-    children = [
-        _build_rich(depth + 1, min_depth, max_depth, dx, dy, weights, alpha, leaves)
-        for _ in range(n_args)
-    ]
-    return {
-        "id": nid,
-        "func": func.__name__,
-        "arity": n_args,
-        "children": children,
-        "params": params,
-    }
+def _tree_response(session) -> dict:
+    return {"root_id": session["root_id"], "nodes": nodes_to_dict(session["nodes"])}
 
 
-def _eval_rich(node, steps, leaves):
-    if node["arity"] == 0:
-        leaf = leaves[node["id"]]
-        return leaf["base"] + leaf["delta"] * steps
-    _, func = FUNC_BY_NAME[node["func"]]
-    args = [_eval_rich(c, steps, leaves) for c in node["children"]]
-    return func(*args, **node.get("params", {}))
+def _make_leaf_node(fd, dx, dy, alpha) -> tuple[Node, np.ndarray]:
+    params = fd.generate() if fd.generate else {}
+    base = fd.func(dx=dx, dy=dy, **params).astype(np.float32)
+    node = Node(func=fd, params=params, delta=float(random_delta(alpha)))
+    return node, base
 
 
-def _collect_leaf_ids(node):
-    if node["arity"] == 0:
-        return [node["id"]]
-    ids = []
-    for c in node["children"]:
-        ids.extend(_collect_leaf_ids(c))
-    return ids
+def _make_rand_color_leaf(mean_color, dx, dy, alpha) -> tuple[Node, np.ndarray]:
+    fd = REGISTRY_BY_NAME["rand_color"]
+    params = {"color": [float(mean_color[i]) for i in range(3)]}
+    base = fd.func(dx=dx, dy=dy, **params).astype(np.float32)
+    node = Node(func=fd, params=params, delta=float(alpha))
+    return node, base
 
 
-def _find_node(tree, node_id):
-    if tree["id"] == node_id:
-        return tree
-    for child in tree.get("children", []):
-        found = _find_node(child, node_id)
-        if found is not None:
-            return found
-    return None
+def _remove_subtree(node_id: str, nodes: dict):
+    """Remove node and all its descendants from the nodes dict."""
+    node = nodes.pop(node_id, None)
+    if node:
+        for cid in node.children:
+            _remove_subtree(cid, nodes)
 
 
-def _find_parent(tree, node_id):
-    for i, child in enumerate(tree.get("children", [])):
-        if child["id"] == node_id:
-            return tree, i
-        result = _find_parent(child, node_id)
-        if result is not None:
-            return result
-    return None
+# ── Undo ──────────────────────────────────────────────────────────────────────
+
+_UNDO_LIMIT = 20
 
 
-def _node_depth(tree, node_id, d=0):
-    if tree["id"] == node_id:
-        return d
-    for child in tree.get("children", []):
-        result = _node_depth(child, node_id, d + 1)
-        if result is not None:
-            return result
-    return None
+def _push_undo(session):
+    stack = session.setdefault("_undo_stack", [])
+    stack.append({
+        "root_id": session["root_id"],
+        "nodes": nodes_to_dict(session["nodes"]),
+        "leaves": {k: v.copy() for k, v in session["leaves"].items()},
+    })
+    if len(stack) > _UNDO_LIMIT:
+        stack.pop(0)
+
+
+# ── Color helpers ─────────────────────────────────────────────────────────────
+
+
+def _rgb_to_color_space(mean_rgb, color_space):
+    r, g, b = float(mean_rgb[0]), float(mean_rgb[1]), float(mean_rgb[2])
+    if color_space == "hsv":
+        return list(colorsys.rgb_to_hsv(r, g, b))
+    if color_space == "cmy":
+        return [1.0 - r, 1.0 - g, 1.0 - b]
+    return [r, g, b]
+
+
+# ── Pruning helpers ───────────────────────────────────────────────────────────
+
+
+def _collect_parents_postorder(node_id: str, nodes: dict, result: list):
+    """Collect non-leaf node IDs in post-order (children before parents)."""
+    node = nodes[node_id]
+    for cid in node.children:
+        _collect_parents_postorder(cid, nodes, result)
+    if node.children:
+        result.append(node_id)
+
+
+_TEMP_ID = "__prune_temp__"
+
+
+def _prune_pass(subtree_root_id, nodes, leaves, dx, dy, color_space, method_fn, delta, threshold, alpha):
+    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    rand_color_fd = REGISTRY_BY_NAME["rand_color"]
+
+    original_raw = eval_node(subtree_root_id, nodes, leaves, steps)
+    original_frame = render_frame(original_raw, color_space, dx, dy)
+
+    parents_postorder = []
+    _collect_parents_postorder(subtree_root_id, nodes, parents_postorder)
+
+    n_pruned = 0
+    for parent_id in parents_postorder:
+        parent_node = nodes.get(parent_id)
+        if parent_node is None:
+            continue
+        for i, child_id in enumerate(list(parent_node.children)):
+            child_node = nodes.get(child_id)
+            if child_node is None or child_node.func.func.__name__ == "rand_color":
+                continue
+
+            child_raw = eval_node(child_id, nodes, leaves, steps)
+            child_base = child_raw[0] if child_raw.ndim == 4 else child_raw
+
+            leaves[_TEMP_ID] = (child_base + np.float32(delta)).astype(np.float32)
+            nodes[_TEMP_ID] = Node(func=rand_color_fd, id=_TEMP_ID, delta=0.0)
+            parent_node.children[i] = _TEMP_ID
+
+            perturbed_raw = eval_node(subtree_root_id, nodes, leaves, steps)
+            perturbed_frame = render_frame(perturbed_raw, color_space, dx, dy)
+
+            parent_node.children[i] = child_id
+            del nodes[_TEMP_ID]
+            del leaves[_TEMP_ID]
+
+            if method_fn(original_frame, perturbed_frame, threshold=threshold):
+                child_frame = render_frame(eval_node(child_id, nodes, leaves, steps), color_space, dx, dy)
+                mean_rgb = child_frame.mean(axis=(0, 1)) / 255.0
+                mean_color = _rgb_to_color_space(mean_rgb, color_space)
+
+                for lid in collect_leaf_ids(child_id, nodes):
+                    leaves.pop(lid, None)
+                _remove_subtree(child_id, nodes)
+
+                new_node, new_base = _make_rand_color_leaf(mean_color, dx, dy, alpha)
+                nodes[new_node.id] = new_node
+                leaves[new_node.id] = new_base
+                parent_node.children[i] = new_node.id
+                n_pruned += 1
+
+    return n_pruned
+
+
+def _compute_sensitivity(root_id, nodes, leaves, dx, dy, color_space, delta):
+    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
+    rand_color_fd = REGISTRY_BY_NAME["rand_color"]
+    result = {}
+
+    original_root_raw = eval_node(root_id, nodes, leaves, steps)
+    original_root_entropy = image_entropy(render_frame(original_root_raw, color_space, dx, dy))
+
+    def visit(node_id):
+        node = nodes[node_id]
+        if node.arity == 0:
+            return
+
+        node_raw = eval_node(node_id, nodes, leaves, steps)
+        node_base = node_raw[0] if node_raw.ndim == 4 else node_raw
+
+        if root_id == node_id:
+            root_sens = 0.0
+        else:
+            parent_id, idx = find_parent(nodes, node_id)
+            parent_node = nodes[parent_id]
+            leaves[_TEMP_ID] = (node_base + np.float32(delta)).astype(np.float32)
+            nodes[_TEMP_ID] = Node(func=rand_color_fd, id=_TEMP_ID, delta=0.0)
+            parent_node.children[idx] = _TEMP_ID
+
+            perturbed_root_frame = render_frame(
+                eval_node(root_id, nodes, leaves, steps), color_space, dx, dy
+            )
+            parent_node.children[idx] = node_id
+            del nodes[_TEMP_ID]
+            del leaves[_TEMP_ID]
+
+            root_sens = round(abs(image_entropy(perturbed_root_frame) - original_root_entropy), 4)
+
+        original_node_entropy = image_entropy(
+            render_frame(eval_node(node_id, nodes, leaves, steps), color_space, dx, dy)
+        )
+        leaf_deltas = []
+        for lid in collect_leaf_ids(node_id, nodes):
+            if lid not in leaves:
+                continue
+            original_base = leaves[lid]
+            leaves[lid] = original_base + np.float32(delta)
+            perturbed_entropy = image_entropy(
+                render_frame(eval_node(node_id, nodes, leaves, steps), color_space, dx, dy)
+            )
+            leaves[lid] = original_base
+            leaf_deltas.append(abs(perturbed_entropy - original_node_entropy))
+
+        avg_leaf = round(float(np.mean(leaf_deltas)) if leaf_deltas else 0.0, 4)
+        result[node_id] = {"root": root_sens, "leaf": avg_leaf}
+
+        for cid in node.children:
+            visit(cid)
+
+    visit(root_id)
+    return result
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -180,41 +271,28 @@ def build():
 
     weights = load_personality_list(PERSONALITIES_DIR / (personality + ".json"))
     np.random.seed(seed % (2**32 - 1))
-    leaves = {}
-    tree = _build_rich(0, min_depth, max_depth, dx, dy, weights, alpha, leaves)
+    nodes, leaves = {}, {}
+    root_id = build_node(0, min_depth, max_depth, dx, dy, weights, alpha, nodes, leaves)
 
     tree_id = _new_id()
-    _sessions[tree_id] = {
-        "tree": tree,
-        "leaves": leaves,
-        "meta": {
-            "dx": dx,
-            "dy": dy,
-            "seed": seed,
-            "min_depth": min_depth,
-            "max_depth": max_depth,
-            "alpha": alpha,
-            "color_space": color_space,
-            "personality": personality,
-        },
-    }
-    return jsonify(
-        {"tree_id": tree_id, "tree": tree, "meta": _sessions[tree_id]["meta"]}
-    )
+    meta = {"dx": dx, "dy": dy, "seed": seed, "min_depth": min_depth,
+            "max_depth": max_depth, "alpha": alpha, "color_space": color_space,
+            "personality": personality}
+    _sessions[tree_id] = {"root_id": root_id, "nodes": nodes, "leaves": leaves, "meta": meta}
+    return jsonify({"tree_id": tree_id, **_tree_response(_sessions[tree_id]), "meta": meta})
 
 
 @app.route("/api/preview", methods=["POST"])
 def preview():
     data = request.json
-    tree_id = data["tree_id"]
-    session = _sessions.get(tree_id)
+    session = _sessions.get(data["tree_id"])
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
 
     dx, dy = session["meta"]["dx"], session["meta"]["dy"]
     color_space = session["meta"].get("color_space", "rgb")
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    raw = _eval_rich(session["tree"], steps, session["leaves"])
+    raw = eval_node(session["root_id"], session["nodes"], session["leaves"], steps)
     img_8 = render_frame(raw, color_space, dx, dy)
     buf = io.BytesIO()
     Image.fromarray(img_8).save(buf, format="PNG")
@@ -236,8 +314,7 @@ def save_tree():
         return jsonify({"error": "unknown tree_id"}), 404
 
     os.makedirs(SAVE_DIR, exist_ok=True)
-    path = os.path.join(SAVE_DIR, f"{name}.pkl")
-    with open(path, "wb") as f:
+    with open(os.path.join(SAVE_DIR, f"{name}.pkl"), "wb") as f:
         pickle.dump(session, f)
     return jsonify({"name": name})
 
@@ -255,9 +332,7 @@ def load_tree():
 
     tree_id = _new_id()
     _sessions[tree_id] = session
-    return jsonify(
-        {"tree_id": tree_id, "tree": session["tree"], "meta": session["meta"]}
-    )
+    return jsonify({"tree_id": tree_id, **_tree_response(session), "meta": session["meta"]})
 
 
 @app.route("/api/node/preview", methods=["POST"])
@@ -269,15 +344,13 @@ def node_preview():
     session = _sessions.get(tree_id)
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
-
-    node = _find_node(session["tree"], node_id)
-    if node is None:
+    if node_id not in session["nodes"]:
         return jsonify({"error": "unknown node_id"}), 404
 
     dx, dy = session["meta"]["dx"], session["meta"]["dy"]
     color_space = session["meta"].get("color_space", "rgb")
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    raw = _eval_rich(node, steps, session["leaves"])
+    raw = eval_node(node_id, session["nodes"], session["leaves"], steps)
     img_8 = render_frame(raw, color_space, dx, dy)
     buf = io.BytesIO()
     Image.fromarray(img_8).save(buf, format="PNG")
@@ -295,80 +368,64 @@ def set_func():
     session = _sessions.get(tree_id)
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
-    if func_name not in FUNC_BY_NAME:
+
+    new_fd = REGISTRY_BY_NAME.get(func_name)
+    if new_fd is None:
         return jsonify({"error": f"unknown function: {func_name}"}), 400
 
-    new_arity, new_func = FUNC_BY_NAME[func_name]
-    node = _find_node(session["tree"], node_id)
+    node = session["nodes"].get(node_id)
     if node is None:
         return jsonify({"error": "unknown node_id"}), 404
 
-    old_arity = node["arity"]
     meta = session["meta"]
+    old_arity = node.arity
+    new_arity = new_fd.arity
 
     if new_arity == old_arity:
-        node["func"] = func_name
-        # If becoming a leaf with same arity (0→0), regenerate leaf data
+        node.func = new_fd
         if new_arity == 0:
-            for lid in _collect_leaf_ids(node):
-                session["leaves"].pop(lid, None)
-            base, delta, params = _build_leaf(
-                new_func, meta["dx"], meta["dy"], meta["alpha"]
-            )
-            session["leaves"][node_id] = {
-                "base": base,
-                "delta": delta,
-                "func": func_name,
-                "params": params,
-            }
-            node.update({"delta": float(delta), "params": params})
+            params = new_fd.generate() if new_fd.generate else {}
+            base = new_fd.func(dx=meta["dx"], dy=meta["dy"], **params).astype(np.float32)
+            session["leaves"][node_id] = base
+            node.params = params
+            node.delta = float(random_delta(meta["alpha"]))
         else:
-            node["params"] = generate_params(func_name)
-        return jsonify({"tree": session["tree"]})
+            node.params = new_fd.generate() if new_fd.generate else {}
+        return jsonify(_tree_response(session))
 
-    # Arity is changing
-    for lid in _collect_leaf_ids(node):
-        session["leaves"].pop(lid, None)
-
-    node["func"] = func_name
-    node["arity"] = new_arity
+    # Arity is changing — remove old children / leaf
+    for cid in node.children:
+        for lid in collect_leaf_ids(cid, session["nodes"]):
+            session["leaves"].pop(lid, None)
+        _remove_subtree(cid, session["nodes"])
 
     if new_arity == 0:
-        base, delta, params = _build_leaf(
-            new_func, meta["dx"], meta["dy"], meta["alpha"]
-        )
-        session["leaves"][node_id] = {
-            "base": base,
-            "delta": delta,
-            "func": func_name,
-            "params": params,
-        }
-        node.update({"children": [], "delta": float(delta), "params": params})
+        session["leaves"].pop(node_id, None)
+        params = new_fd.generate() if new_fd.generate else {}
+        base = new_fd.func(dx=meta["dx"], dy=meta["dy"], **params).astype(np.float32)
+        session["leaves"][node_id] = base
+        node.func = new_fd
+        node.params = params
+        node.delta = float(random_delta(meta["alpha"]))
+        node.children = []
     else:
-        nd = _node_depth(session["tree"], node_id) or 0
-        child_depth = nd + 1
-        eff_max = max(meta["max_depth"] - child_depth, 2)
-        eff_min = max(min(meta["min_depth"] - child_depth, eff_max - 1), 1)
+        session["leaves"].pop(node_id, None)
+        nd = node_depth(session["nodes"], session["root_id"], node_id) or 0
+        eff_max = max(meta["max_depth"] - nd - 1, 2)
+        eff_min = max(min(meta["min_depth"] - nd - 1, eff_max - 1), 1)
         weights = load_personality_list(PERSONALITIES_DIR / (meta.get("personality", "personality") + ".json"))
         new_children = []
         for _ in range(new_arity):
             np.random.seed(np.random.randint(0, 2**31))
-            child = _build_rich(
-                0,
-                eff_min,
-                eff_max,
-                meta["dx"],
-                meta["dy"],
-                weights,
-                meta["alpha"],
-                session["leaves"],
-            )
-            new_children.append(child)
-        node["children"] = new_children
-        node["params"] = generate_params(func_name)
-        node.pop("delta", None)
+            child_id = build_node(0, eff_min, eff_max, meta["dx"], meta["dy"],
+                                  weights, meta["alpha"], session["nodes"], session["leaves"])
+            new_children.append(child_id)
+        node.func = new_fd
+        node.params = new_fd.generate() if new_fd.generate else {}
+        node.delta = None
+        node.children = new_children
 
-    return jsonify({"tree": session["tree"]})
+    return jsonify(_tree_response(session))
 
 
 @app.route("/api/node/regenerate", methods=["POST"])
@@ -381,39 +438,34 @@ def regenerate():
     session = _sessions.get(tree_id)
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
-
-    node = _find_node(session["tree"], node_id)
-    if node is None:
+    if node_id not in session["nodes"]:
         return jsonify({"error": "unknown node_id"}), 404
 
     meta = session["meta"]
-    for lid in _collect_leaf_ids(node):
-        session["leaves"].pop(lid, None)
-
-    nd = _node_depth(session["tree"], node_id) or 0
+    nd = node_depth(session["nodes"], session["root_id"], node_id) or 0
     eff_max = max(meta["max_depth"] - nd, 2)
     eff_min = max(min(meta["min_depth"] - nd, eff_max - 1), 1)
 
-    weights = load_personality_list(DATA_DIR / "personality.json")
+    parent_result = None
+    if session["root_id"] != node_id:
+        parent_result = find_parent(session["nodes"], node_id)
+
+    for lid in collect_leaf_ids(node_id, session["nodes"]):
+        session["leaves"].pop(lid, None)
+    _remove_subtree(node_id, session["nodes"])
+
+    weights = load_personality_list(PERSONALITIES_DIR / (meta.get("personality", "personality") + ".json"))
     np.random.seed(seed % (2**32 - 1))
-    new_subtree = _build_rich(
-        0,
-        eff_min,
-        eff_max,
-        meta["dx"],
-        meta["dy"],
-        weights,
-        meta["alpha"],
-        session["leaves"],
-    )
+    new_root_id = build_node(0, eff_min, eff_max, meta["dx"], meta["dy"],
+                             weights, meta["alpha"], session["nodes"], session["leaves"])
 
-    if session["tree"]["id"] == node_id:
-        session["tree"] = new_subtree
+    if parent_result:
+        parent_id, idx = parent_result
+        session["nodes"][parent_id].children[idx] = new_root_id
     else:
-        parent, idx = _find_parent(session["tree"], node_id)
-        parent["children"][idx] = new_subtree
+        session["root_id"] = new_root_id
 
-    return jsonify({"tree": session["tree"], "new_node_id": new_subtree["id"]})
+    return jsonify({**_tree_response(session), "new_node_id": new_root_id})
 
 
 @app.route("/api/leaf/set-params", methods=["POST"])
@@ -428,30 +480,26 @@ def set_leaf_params():
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
 
-    node = _find_node(session["tree"], node_id)
-    if node is None or node["arity"] != 0:
+    node = session["nodes"].get(node_id)
+    if node is None or node.arity != 0:
         return jsonify({"error": "node not found or not a leaf"}), 404
-
-    leaf = session["leaves"].get(node_id)
-    if leaf is None:
+    if node_id not in session["leaves"]:
         return jsonify({"error": "leaf data missing"}), 500
 
     meta = session["meta"]
     _push_undo(session)
 
     if new_params:
-        merged = {**leaf.get("params", {}), **new_params}
-        new_base = _recompute_leaf(node["func"], merged, meta["dx"], meta["dy"])
-        if new_base is not None:
-            leaf["base"] = new_base
-            leaf["params"] = merged
-            node["params"] = merged
+        merged = {**node.params, **new_params}
+        node.params = merged
+        session["leaves"][node_id] = node.func.func(
+            dx=meta["dx"], dy=meta["dy"], **merged
+        ).astype(np.float32)
 
     if new_delta is not None:
-        leaf["delta"] = np.float32(new_delta)
-        node["delta"] = float(new_delta)
+        node.delta = float(new_delta)
 
-    return jsonify({"tree": session["tree"]})
+    return jsonify(_tree_response(session))
 
 
 @app.route("/api/function-params")
@@ -470,12 +518,12 @@ def set_node_params():
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
 
-    node = _find_node(session["tree"], node_id)
-    if node is None or node["arity"] == 0:
+    node = session["nodes"].get(node_id)
+    if node is None or node.arity == 0:
         return jsonify({"error": "node not found or is a leaf"}), 404
 
-    node["params"] = {**node.get("params", {}), **new_params}
-    return jsonify({"tree": session["tree"]})
+    node.params = {**node.params, **new_params}
+    return jsonify(_tree_response(session))
 
 
 @app.route("/api/node/flatten", methods=["POST"])
@@ -488,10 +536,10 @@ def flatten_node():
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
 
-    node = _find_node(session["tree"], node_id)
+    node = session["nodes"].get(node_id)
     if node is None:
         return jsonify({"error": "unknown node_id"}), 404
-    if node["arity"] == 0:
+    if node.arity == 0:
         return jsonify({"error": "node is already a leaf"}), 400
 
     meta = session["meta"]
@@ -500,192 +548,31 @@ def flatten_node():
     alpha = meta.get("alpha", 4e-3)
     _push_undo(session)
 
+    parent_result = None
+    if session["root_id"] != node_id:
+        parent_result = find_parent(session["nodes"], node_id)
+
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    raw = _eval_rich(node, steps, session["leaves"])
+    raw = eval_node(node_id, session["nodes"], session["leaves"], steps)
     frame = render_frame(raw, color_space, dx, dy)
     mean_rgb = frame.mean(axis=(0, 1)) / 255.0
     mean_color = _rgb_to_color_space(mean_rgb, color_space)
 
-    for lid in _collect_leaf_ids(node):
+    for lid in collect_leaf_ids(node_id, session["nodes"]):
         session["leaves"].pop(lid, None)
+    _remove_subtree(node_id, session["nodes"])
 
-    new_node, new_leaf = _make_rand_color_leaf(mean_color, dx, dy, alpha)
+    new_node, new_base = _make_rand_color_leaf(mean_color, dx, dy, alpha)
+    session["nodes"][new_node.id] = new_node
+    session["leaves"][new_node.id] = new_base
 
-    if session["tree"]["id"] == node_id:
-        session["tree"] = new_node
+    if parent_result:
+        parent_id, idx = parent_result
+        session["nodes"][parent_id].children[idx] = new_node.id
     else:
-        parent, idx = _find_parent(session["tree"], node_id)
-        parent["children"][idx] = new_node
+        session["root_id"] = new_node.id
 
-    session["leaves"][new_node["id"]] = new_leaf
-    return jsonify({"tree": session["tree"], "new_node_id": new_node["id"]})
-
-
-_UNDO_LIMIT = 20
-
-
-def _push_undo(session):
-    stack = session.setdefault("_undo_stack", [])
-    stack.append({
-        "tree":   _json.loads(_json.dumps(session["tree"])),
-        "leaves": {k: {**v, "base": v["base"].copy()} for k, v in session["leaves"].items()},
-    })
-    if len(stack) > _UNDO_LIMIT:
-        stack.pop(0)
-
-
-def _make_rand_color_leaf(mean_color, dx, dy, alpha):
-    nid = _new_id()
-    params = {"color": [float(mean_color[i]) for i in range(3)]}
-    _, rand_color_fn = FUNC_BY_NAME["rand_color"]
-    base = rand_color_fn(dx=dx, dy=dy, **params).astype(np.float32)
-    delta = np.float32(alpha)
-    node = {
-        "id": nid, "func": "rand_color", "arity": 0,
-        "children": [], "delta": float(delta), "params": params,
-    }
-    leaf_data = {"base": base, "delta": delta, "func": "rand_color", "params": params}
-    return node, leaf_data
-
-
-def _rgb_to_color_space(mean_rgb, color_space):
-    r, g, b = float(mean_rgb[0]), float(mean_rgb[1]), float(mean_rgb[2])
-    if color_space == "hsv":
-        return list(colorsys.rgb_to_hsv(r, g, b))
-    if color_space == "cmy":
-        return [1.0 - r, 1.0 - g, 1.0 - b]
-    return [r, g, b]
-
-
-def _collect_parents_postorder(node, result):
-    """Collect all non-leaf nodes in post-order (bottom-up)."""
-    for child in node.get("children", []):
-        _collect_parents_postorder(child, result)
-    if node.get("children"):
-        result.append(node)
-
-
-def _prune_pass(subtree_root, leaves, dx, dy, color_space, method_fn, delta, threshold, alpha):
-    """One bottom-up pruning pass. Returns number of subbranches pruned."""
-    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    _TEMP_ID = "__prune_temp__"
-
-    original_raw = _eval_rich(subtree_root, steps, leaves)
-    original_frame = render_frame(original_raw, color_space, dx, dy)
-
-    parents = []
-    _collect_parents_postorder(subtree_root, parents)
-
-    n_pruned = 0
-    for parent in parents:
-        for i, child in enumerate(parent["children"]):
-            if child["func"] == "rand_color":
-                continue
-
-            # Evaluate the child subbranch
-            child_raw = _eval_rich(child, steps, leaves)
-            child_base = child_raw[0] if child_raw.ndim == 4 else child_raw
-
-            # Temporarily replace child with a perturbed constant node
-            leaves[_TEMP_ID] = {
-                "base": (child_base + np.float32(delta)).astype(np.float32),
-                "delta": np.float32(0), "func": "rand_color", "params": {},
-            }
-            temp_node = {"id": _TEMP_ID, "func": "rand_color", "arity": 0, "children": [], "delta": 0.0, "params": {}}
-            parent["children"][i] = temp_node
-
-            perturbed_raw = _eval_rich(subtree_root, steps, leaves)
-            perturbed_frame = render_frame(perturbed_raw, color_space, dx, dy)
-
-            # Restore
-            parent["children"][i] = child
-            del leaves[_TEMP_ID]
-
-            if method_fn(original_frame, perturbed_frame, threshold=threshold):
-                # Mean color from the rendered child output (visually accurate)
-                child_frame = render_frame(child_raw, color_space, dx, dy)
-                mean_rgb = child_frame.mean(axis=(0, 1)) / 255.0
-                mean_color = _rgb_to_color_space(mean_rgb, color_space)
-
-                for lid in _collect_leaf_ids(child):
-                    leaves.pop(lid, None)
-
-                new_node, new_leaf_data = _make_rand_color_leaf(mean_color, dx, dy, alpha)
-                parent["children"][i] = new_node
-                leaves[new_node["id"]] = new_leaf_data
-                n_pruned += 1
-
-    return n_pruned
-
-
-def _compute_sensitivity(tree_root, leaves, dx, dy, color_space, delta):
-    """For every non-leaf node N compute:
-      - root:  |ΔH| at tree root when N's output is perturbed
-      - leaf:  mean |ΔH| at N when each of its leaf descendants is perturbed
-    Returns {node_id: {"root": float, "leaf": float}}
-    """
-    steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    temp_id = "__sens_temp__"
-    result = {}
-
-    original_root_raw = _eval_rich(tree_root, steps, leaves)
-    original_root_frame = render_frame(original_root_raw, color_space, dx, dy)
-    original_root_entropy = image_entropy(original_root_frame)
-
-    def visit(node):
-        if node["arity"] == 0:
-            return
-
-        # ── Root sensitivity ──────────────────────────────────────────────
-        node_raw = _eval_rich(node, steps, leaves)
-        node_base = node_raw[0] if node_raw.ndim == 4 else node_raw
-
-        if tree_root["id"] == node["id"]:
-            root_sens = 0.0
-        else:
-            parent, idx = _find_parent(tree_root, node["id"])
-            leaves[temp_id] = {
-                "base": (node_base + np.float32(delta)).astype(np.float32),
-                "delta": np.float32(0), "func": "rand_color", "params": {},
-            }
-            temp_node = {"id": temp_id, "func": "rand_color", "arity": 0,
-                         "children": [], "delta": 0.0, "params": {}}
-            parent["children"][idx] = temp_node
-
-            perturbed_root_frame = render_frame(
-                _eval_rich(tree_root, steps, leaves), color_space, dx, dy
-            )
-            parent["children"][idx] = node
-            del leaves[temp_id]
-
-            root_sens = round(abs(image_entropy(perturbed_root_frame) - original_root_entropy), 4)
-
-        # ── Avg leaf sensitivity ──────────────────────────────────────────
-        original_node_entropy = image_entropy(
-            render_frame(_eval_rich(node, steps, leaves), color_space, dx, dy)
-        )
-        leaf_deltas = []
-        for lid in _collect_leaf_ids(node):
-            if lid not in leaves:
-                continue
-            leaf = leaves[lid]
-            original_base = leaf["base"]
-            leaf["base"] = original_base + np.float32(delta)
-
-            perturbed_node_entropy = image_entropy(
-                render_frame(_eval_rich(node, steps, leaves), color_space, dx, dy)
-            )
-            leaf["base"] = original_base
-            leaf_deltas.append(abs(perturbed_node_entropy - original_node_entropy))
-
-        avg_leaf = round(float(np.mean(leaf_deltas)) if leaf_deltas else 0.0, 4)
-        result[node["id"]] = {"root": root_sens, "leaf": avg_leaf}
-
-        for child in node.get("children", []):
-            visit(child)
-
-    visit(tree_root)
-    return result
+    return jsonify({**_tree_response(session), "new_node_id": new_node.id})
 
 
 @app.route("/api/sensitivity", methods=["POST"])
@@ -701,20 +588,16 @@ def sensitivity():
     meta = session["meta"]
     dx, dy = meta["dx"], meta["dy"]
     color_space = meta.get("color_space", "rgb")
-
     reference_node_id = data.get("reference_node_id")
 
-    tree_copy = _json.loads(_json.dumps(session["tree"]))
-    leaves_copy = {k: {**v, "base": v["base"].copy()} for k, v in session["leaves"].items()}
+    nodes_copy = nodes_from_dict(nodes_to_dict(session["nodes"]))
+    leaves_copy = {k: v.copy() for k, v in session["leaves"].items()}
 
-    if reference_node_id:
-        root_copy = _find_node(tree_copy, reference_node_id)
-        if root_copy is None:
-            return jsonify({"error": "unknown reference_node_id"}), 404
-    else:
-        root_copy = tree_copy
+    root_id = reference_node_id if reference_node_id else session["root_id"]
+    if root_id not in nodes_copy:
+        return jsonify({"error": "unknown reference_node_id"}), 404
 
-    return jsonify(_compute_sensitivity(root_copy, leaves_copy, dx, dy, color_space, delta))
+    return jsonify(_compute_sensitivity(root_id, nodes_copy, leaves_copy, dx, dy, color_space, delta))
 
 
 @app.route("/api/undo", methods=["POST"])
@@ -727,9 +610,10 @@ def undo():
     if not stack:
         return jsonify({"error": "nothing to undo"}), 400
     snapshot = stack.pop()
-    session["tree"]   = snapshot["tree"]
+    session["root_id"] = snapshot["root_id"]
+    session["nodes"] = nodes_from_dict(snapshot["nodes"])
     session["leaves"] = snapshot["leaves"]
-    return jsonify({"tree": session["tree"]})
+    return jsonify(_tree_response(session))
 
 
 @app.route("/api/prune-methods")
@@ -750,10 +634,10 @@ def prune():
     if session is None:
         return jsonify({"error": "unknown tree_id"}), 404
 
-    node = _find_node(session["tree"], node_id)
+    node = session["nodes"].get(node_id)
     if node is None:
         return jsonify({"error": "unknown node_id"}), 404
-    if node["arity"] == 0:
+    if node.arity == 0:
         return jsonify({"error": "cannot prune a leaf node"}), 400
 
     method_fn = PRUNE_METHODS.get(method_name)
@@ -768,12 +652,13 @@ def prune():
     _push_undo(session)
     total_pruned = 0
     while True:
-        n = _prune_pass(node, session["leaves"], dx, dy, color_space, method_fn, delta, threshold, alpha)
+        n = _prune_pass(node_id, session["nodes"], session["leaves"],
+                        dx, dy, color_space, method_fn, delta, threshold, alpha)
         total_pruned += n
         if n == 0:
             break
 
-    return jsonify({"tree": session["tree"], "pruned": total_pruned})
+    return jsonify({**_tree_response(session), "pruned": total_pruned})
 
 
 def main():

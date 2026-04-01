@@ -1,11 +1,6 @@
-// ── Tree traversal ────────────────────────────────────────────────────────────
-export function findNode(tree, id) {
-  if (tree.id === id) return tree;
-  for (const c of tree.children || []) {
-    const found = findNode(c, id);
-    if (found) return found;
-  }
-  return null;
+// ── Tree lookup ───────────────────────────────────────────────────────────────
+export function findNode(nodes, id) {
+  return (nodes && nodes[id]) || null;
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────

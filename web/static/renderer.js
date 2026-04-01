@@ -18,7 +18,7 @@ export function renderTree() {
   svg.attr('width', W).attr('height', H);
   gRoot.selectAll('*').remove();
 
-  const visible = visibleSubtree(state.treeData);
+  const visible = visibleSubtree(state.rootId, state.nodes);
   const hier    = d3.hierarchy(visible, d => d._kids.length ? d._kids : null);
 
   const leafCount   = hier.leaves().length;
@@ -77,13 +77,14 @@ export function renderTree() {
   }
 }
 
-export function visibleSubtree(node) {
+export function visibleSubtree(nodeId, nodes) {
+  const node = nodes[nodeId];
   const copy = {
-    id: node.id, func: node.func, arity: node.arity,
+    id: nodeId, func: node.func, arity: node.arity,
     params: node.params, delta: node.delta, _kids: [],
   };
-  if (node.children.length && !state.collapsedIds.has(node.id))
-    copy._kids = node.children.map(visibleSubtree);
+  if (node.children.length && !state.collapsedIds.has(nodeId))
+    copy._kids = node.children.map(cid => visibleSubtree(cid, nodes));
   return copy;
 }
 
@@ -109,12 +110,13 @@ export function fitTree() {
   );
 }
 
-export function updateStats(node) {
+export function updateStats(rootId, nodes) {
   let total = 0, leaves = 0, depth = 0;
-  (function walk(n, d) {
+  (function walk(id, d) {
+    const n = nodes[id]; if (!n) return;
     total++; if (n.arity === 0) leaves++; if (d > depth) depth = d;
-    (n.children || []).forEach(c => walk(c, d + 1));
-  })(node, 0);
+    (n.children || []).forEach(cid => walk(cid, d + 1));
+  })(rootId, 0);
   document.getElementById('tree-stats').innerHTML =
     `<small>${total} nodes · ${leaves} leaves · depth ${depth}</small>`;
 }

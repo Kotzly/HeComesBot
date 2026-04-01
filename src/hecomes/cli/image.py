@@ -4,47 +4,9 @@ import pathlib
 import numpy as np
 from PIL import Image as PILImage
 
-from hecomes.artgen.functions import BUILD_FUNCTIONS, generate_params
 from hecomes.artgen.render import COLOR_SPACES, render_frame
-from hecomes.artgen.tree import get_random_function, random_delta
+from hecomes.artgen.tree import build_node, eval_node
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
-
-_FUNC_BY_NAME = {f.__name__: (n, f) for n, f in BUILD_FUNCTIONS}
-
-
-def _build_leaf(func, dx, dy, alpha):
-    params = generate_params(func.__name__)
-    base = func(dx=dx, dy=dy, **params).astype(np.float32)
-    delta = np.float32(random_delta(alpha))
-    return base, delta, params
-
-
-def _build_tree(depth, min_depth, max_depth, dx, dy, weights, alpha, leaves):
-    n_args, func = get_random_function(
-        depth, p=weights, min_depth=min_depth, max_depth=max_depth
-    )
-    import uuid
-    nid = str(uuid.uuid4())[:8]
-    if n_args == 0:
-        base, delta, params = _build_leaf(func, dx, dy, alpha)
-        leaves[nid] = {"base": base, "delta": delta, "func": func.__name__, "params": params}
-        return {"id": nid, "func": func.__name__, "arity": 0, "children": [],
-                "delta": float(delta), "params": params}
-    params = generate_params(func.__name__)
-    children = [
-        _build_tree(depth + 1, min_depth, max_depth, dx, dy, weights, alpha, leaves)
-        for _ in range(n_args)
-    ]
-    return {"id": nid, "func": func.__name__, "arity": n_args, "children": children, "params": params}
-
-
-def _eval_tree(node, steps, leaves):
-    if node["arity"] == 0:
-        leaf = leaves[node["id"]]
-        return leaf["base"] + leaf["delta"] * steps
-    _, func = _FUNC_BY_NAME[node["func"]]
-    args = [_eval_tree(c, steps, leaves) for c in node["children"]]
-    return func(*args, **node.get("params", {}))
 
 
 def _parse_args():
@@ -81,11 +43,11 @@ def main():
 
     np.random.seed(seed % (2**32 - 1))
     leaves = {}
-    tree = _build_tree(0, args.min_depth, args.max_depth, args.width, args.height,
-                       weights, args.alpha, leaves)
+    tree = build_node(0, args.min_depth, args.max_depth, args.width, args.height,
+                      weights, args.alpha, leaves)
 
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    raw = _eval_tree(tree, steps, leaves)
+    raw = eval_node(tree, steps, leaves)
     img_8 = render_frame(raw, color_space, args.width, args.height)
 
     output_path = pathlib.Path(output_path)
