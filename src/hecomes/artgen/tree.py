@@ -136,6 +136,68 @@ def eval_node(node_id: str, nodes: dict, leaves: dict, steps) -> np.ndarray:
     return node.func.func(*args, **node.params)
 
 
+def linearize(root_id: str, nodes: dict) -> list[str]:
+    """Topological sort: returns node IDs with leaves first, root last."""
+    order = []
+    visited = set()
+
+    def visit(nid):
+        if nid in visited:
+            return
+        visited.add(nid)
+        for cid in nodes[nid].children:
+            visit(cid)
+        order.append(nid)
+
+    visit(root_id)
+    return order
+
+
+def compile_plan(order: list, nodes: dict, leaves: dict) -> list:
+    """Pre-compile the evaluation plan into a list of tuples.
+
+    Replaces string-keyed dict lookups and attribute access with list indexing,
+    so eval_plan pays no Python overhead beyond a flat loop with tuple unpacking.
+
+    Returns a list of (func, params, base, delta, child_indices) where:
+      - leaf nodes: func=None, base=leaf array, delta=float, child_indices=[]
+      - inner nodes: func=callable, params=dict, base=None, delta=None, child_indices=[int, ...]
+    """
+    id_to_idx = {nid: i for i, nid in enumerate(order)}
+    plan = []
+    for nid in order:
+        node = nodes[nid]
+        if node.arity == 0:
+            plan.append((None, None, leaves[nid], node.delta, []))
+        else:
+            child_idxs = [id_to_idx[cid] for cid in node.children]
+            plan.append((node.func.func, node.params, None, None, child_idxs))
+    return plan
+
+
+def eval_plan(plan: list, steps) -> np.ndarray:
+    """Evaluate a compiled plan. No dict lookups — only list indexing.
+
+    Peak memory is O(depth) arrays: each slot is set to None as soon as its
+    parent has consumed it.
+    """
+    buf = [None] * len(plan)
+    for i, (func, params, base, delta, children) in enumerate(plan):
+        if func is None:
+            buf[i] = np.add(base, delta * steps)
+        else:
+            args = [buf[j] for j in children]
+            for j in children:
+                buf[j] = None
+            buf[i] = func(*args, **params)
+    return buf[-1]
+
+
+def eval_linear(order: list, nodes: dict, leaves: dict, steps) -> np.ndarray:
+    """Evaluate tree in topological order. Convenience wrapper around compile_plan + eval_plan."""
+    return eval_plan(compile_plan(order, nodes, leaves), steps)
+
+
 # ── Tree traversal ─────────────────────────────────────────────────────────────
 
 

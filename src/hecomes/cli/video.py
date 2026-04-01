@@ -7,8 +7,7 @@ import numpy as np
 from numpy.random import rand
 
 from hecomes.artgen.func_utils import hsv_to_rgb
-
-from hecomes.artgen.tree import get_random_function, random_delta
+from hecomes.artgen.tree import build_node, compile_plan, eval_plan, linearize
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
 
 RECOMMENDED_CODECS = {
@@ -28,7 +27,8 @@ ALPHA_PIX_FMTS = {
     "gif": "pal8",
 }
 
-# _trees layout: [color_tree(s)..., extra_tree(s)...]
+# _trees layout: list of (order, nodes, leaves) tuples
+# [color_tree(s)..., extra_tree(s)...]
 # - color trees: 1 (shared) or 3 (independent H/S/V)
 # - extra trees: K first (CMY mode only), then alpha
 _trees = None
@@ -37,49 +37,28 @@ _independent_channels = False
 _n_color = 1
 
 
-def build_tree(
-    min_depth=5, max_depth=15, dx=100, dy=100, weights=None, seed=42, alpha=1e-2
-):
+def _build(min_depth, max_depth, dx, dy, weights, seed, alpha):
     np.random.seed(seed % (2**32 - 1))
-
-    def _build_tree(depth=0):
-        fd = get_random_function(
-            depth, p=weights, min_depth=min_depth, max_depth=max_depth
-        )
-        args = [_build_tree(depth + 1) for _ in range(fd.arity)]
-        try:
-            if fd.arity != 0:
-                params = fd.generate() if fd.generate else {}
-                return [fd.arity, fd.func, args, params]
-            else:
-                params = fd.generate() if fd.generate else {}
-                leaf = fd.func(dx=dx, dy=dy, **params).astype(np.float32)
-                return [leaf, np.float32(random_delta(alpha))]
-        except Exception as e:
-            print(fd.func.__name__, str(e))
-            raise e
-
-    return _build_tree(depth=0)
-
-
-def eval_tree(tree, steps):
-    if len(tree) == 2:
-        base, delta = tree
-        return base + delta * steps
-    _, func, branches = tree[:3]
-    params = tree[3] if len(tree) == 4 else {}
-    args = [eval_tree(b, steps) for b in branches]
-    return func(*args, **params)
+    nodes, leaves = {}, {}
+    root_id = build_node(0, min_depth, max_depth, dx, dy, weights, alpha, nodes, leaves)
+    order = linearize(root_id, nodes)
+    return compile_plan(order, nodes, leaves)
 
 
 def _compute_chunk(steps):
     if _independent_channels:
-        channels = [eval_tree(_trees[i], steps)[..., i : i + 1] for i in range(3)]
+        channels = [
+            eval_plan(_trees[i], steps)[..., i : i + 1]
+            for i in range(3)
+        ]
         raw = np.concatenate(channels, axis=-1)
     else:
-        raw = eval_tree(_trees[0], steps)
+        raw = eval_plan(_trees[0], steps)
 
-    extra = [eval_tree(t, steps)[..., 0:1].clip(0, 1) for t in _trees[_n_color:]]
+    extra = [
+        eval_plan(_trees[i], steps)[..., 0:1].clip(0, 1)
+        for i in range(_n_color, len(_trees))
+    ]
 
     if _color_space == "hsv":
         hsv = np.stack(
@@ -189,35 +168,35 @@ def main():
 
     pixel_format = "rgba" if args.alpha else "rgb24"
 
+    build_kwargs = dict(
+        min_depth=args.min_depth,
+        max_depth=args.max_depth,
+        dx=args.width,
+        dy=args.height,
+        alpha=4e-3,
+    )
+
     for i, video_n in enumerate(rand(n_videos)):
         video_n = int(video_n * 1e9) if args.seed is None else args.seed
-
-        build_kwargs = dict(
-            min_depth=args.min_depth,
-            max_depth=args.max_depth,
-            dx=args.width,
-            dy=args.height,
-            alpha=4e-3,
-        )
 
         if args.color_space == "hsv" and args.independent_channels:
             print(f"Building H/S/V trees for video {i+1}/{n_videos} (seed={video_n})")
             color_trees = [
-                build_tree(seed=video_n,          weights=p_h, **build_kwargs),
-                build_tree(seed=video_n ^ 0xABCD, weights=p,   **build_kwargs),
-                build_tree(seed=video_n ^ 0x1234, weights=p,   **build_kwargs),
+                _build(weights=p_h, seed=video_n,          **build_kwargs),
+                _build(weights=p,   seed=video_n ^ 0xABCD, **build_kwargs),
+                _build(weights=p,   seed=video_n ^ 0x1234, **build_kwargs),
             ]
             _n_color = 3
         else:
             print(f"Building tree for video {i+1}/{n_videos} (seed={video_n})")
-            color_trees = [build_tree(seed=video_n, weights=p, **build_kwargs)]
+            color_trees = [_build(weights=p, seed=video_n, **build_kwargs)]
             _n_color = 1
 
         extra_trees = []
         if args.k:
-            extra_trees.append(build_tree(seed=video_n ^ 0x5678, weights=p, **build_kwargs))
+            extra_trees.append(_build(weights=p, seed=video_n ^ 0x5678, **build_kwargs))
         if args.alpha:
-            extra_trees.append(build_tree(seed=video_n ^ 0x9ABC, weights=p, **build_kwargs))
+            extra_trees.append(_build(weights=p, seed=video_n ^ 0x9ABC, **build_kwargs))
 
         _trees = color_trees + extra_trees
         _color_space = args.color_space

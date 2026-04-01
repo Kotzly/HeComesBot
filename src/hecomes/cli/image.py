@@ -5,7 +5,8 @@ import numpy as np
 from PIL import Image as PILImage
 
 from hecomes.artgen.render import COLOR_SPACES, render_frame
-from hecomes.artgen.tree import build_node, eval_node
+from hecomes.artgen.tree import build_node, compile_plan, eval_plan, linearize
+
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
 
 
@@ -47,7 +48,9 @@ def main():
                          weights, args.alpha, nodes, leaves)
 
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    raw = eval_node(root_id, nodes, leaves, steps)
+    order = linearize(root_id, nodes)
+    plan = compile_plan(order, nodes, leaves)
+    raw = eval_plan(plan, steps)
     img_8 = render_frame(raw, color_space, args.width, args.height)
 
     output_path = pathlib.Path(output_path)
