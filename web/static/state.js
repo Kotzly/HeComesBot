@@ -1,7 +1,8 @@
 // ── Shared mutable state ──────────────────────────────────────────────────────
 export const state = {
   treeId:          null,
-  treeData:        null,
+  rootId:          null,
+  nodes:           null,   // flat dict: { node_id: { func, arity, children, params, delta } }
   selectedId:      null,
   referenceId:     null,
   collapsedIds:    new Set(),
