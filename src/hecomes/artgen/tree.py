@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from os.path import isfile
 
 import numpy as np
+import yaml
 
 from hecomes.artgen.functions import FUNCTION_REGISTRY, REGISTRY_BY_NAME, FunctionDef
 
@@ -48,6 +49,36 @@ class Node:
             delta=d.get("delta"),
             id=node_id,
         )
+
+    def to_yaml(self, nodes: dict) -> str:
+        """Serialize this subtree as a nested YAML string."""
+        def _to_nested(node_id):
+            node = nodes[node_id]
+            d = {"id": node_id, "func": node.func.func.__name__, "params": node.params}
+            if node.delta is not None:
+                d["delta"] = node.delta
+            d["children"] = [_to_nested(cid) for cid in node.children]
+            return d
+        return yaml.dump(_to_nested(self.id), default_flow_style=False, sort_keys=False)
+
+    @classmethod
+    def from_yaml(cls, s: str) -> "tuple[str, dict]":
+        """Parse a nested YAML string. Returns (root_id, nodes dict)."""
+        def _flatten(d, nodes):
+            fd = REGISTRY_BY_NAME[d["func"]]
+            child_ids = [_flatten(c, nodes) for c in d.get("children", [])]
+            node = cls(
+                func=fd,
+                params=d.get("params", {}),
+                children=child_ids,
+                delta=d.get("delta"),
+                id=d["id"],
+            )
+            nodes[node.id] = node
+            return node.id
+        nodes = {}
+        root_id = _flatten(yaml.safe_load(s), nodes)
+        return root_id, nodes
 
 
 def nodes_to_dict(nodes: dict) -> dict:
