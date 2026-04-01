@@ -42,12 +42,12 @@ def main():
     weights = load_personality_list(PERSONALITIES_DIR / (personality + ".json"))
 
     np.random.seed(seed % (2**32 - 1))
-    leaves = {}
-    tree = build_node(0, args.min_depth, args.max_depth, args.width, args.height,
-                      weights, args.alpha, leaves)
+    nodes, leaves = {}, {}
+    root_id = build_node(0, args.min_depth, args.max_depth, args.width, args.height,
+                         weights, args.alpha, nodes, leaves)
 
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
-    raw = eval_node(tree, steps, leaves)
+    raw = eval_node(root_id, nodes, leaves, steps)
     img_8 = render_frame(raw, color_space, args.width, args.height)
 
     output_path = pathlib.Path(output_path)

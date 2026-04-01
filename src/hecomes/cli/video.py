@@ -7,7 +7,7 @@ import numpy as np
 from numpy.random import rand
 
 from hecomes.artgen.func_utils import hsv_to_rgb
-from hecomes.artgen.functions import generate_params
+
 from hecomes.artgen.tree import get_random_function, random_delta
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
 
@@ -43,20 +43,20 @@ def build_tree(
     np.random.seed(seed % (2**32 - 1))
 
     def _build_tree(depth=0):
-        n_args, func = get_random_function(
+        fd = get_random_function(
             depth, p=weights, min_depth=min_depth, max_depth=max_depth
         )
-        args = [_build_tree(depth + 1) for _ in range(n_args)]
-        kwargs = dict(dx=dx, dy=dy) if n_args == 0 else {}
+        args = [_build_tree(depth + 1) for _ in range(fd.arity)]
         try:
-            if n_args != 0:
-                params = generate_params(func.__name__)
-                return [n_args, func, args, params]
+            if fd.arity != 0:
+                params = fd.generate() if fd.generate else {}
+                return [fd.arity, fd.func, args, params]
             else:
-                leaf = func(*args, **kwargs).astype(np.float32)
+                params = fd.generate() if fd.generate else {}
+                leaf = fd.func(dx=dx, dy=dy, **params).astype(np.float32)
                 return [leaf, np.float32(random_delta(alpha))]
         except Exception as e:
-            print(func.__name__, str(e))
+            print(fd.func.__name__, str(e))
             raise e
 
     return _build_tree(depth=0)
