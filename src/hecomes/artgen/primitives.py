@@ -2,6 +2,11 @@ import numpy as np
 from scipy.interpolate import NearestNDInterpolator
 from scipy.spatial.transform import Rotation as R
 
+try:
+    import cupy as cp
+except ImportError:
+    cp = None
+
 from hecomes.artgen.func_utils import (
     _apply_kernel,
     _gaussian_kernel_5,
@@ -230,12 +235,11 @@ def saddle(a, b):
 
 
 def safe_divide(a, b, eps=1e-3):
+    xp = cp.get_array_module(a) if cp is not None else np
     with np.errstate(divide='ignore', invalid='ignore'):
         out = a / b
-    inf_mask = np.isinf(out)
-    nan_mask = np.isnan(out)
-    out[inf_mask] = np.sign(out[inf_mask]) * np.float32(1 / eps)
-    out[nan_mask] = np.float32(0.0)
+    out = xp.where(xp.isinf(out), xp.sign(b) * np.float32(1 / eps), out)
+    out = xp.where(xp.isnan(out), np.float32(0.0), out)
     return out
 
 
