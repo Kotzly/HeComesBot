@@ -5,6 +5,11 @@ from os.path import isfile
 import numpy as np
 import yaml
 
+try:
+    import cupy as cp
+except ImportError:
+    cp = None
+
 from hecomes.artgen.functions import FUNCTION_REGISTRY, REGISTRY_BY_NAME, FunctionDef
 
 
@@ -160,7 +165,7 @@ def compile_plan(order: list, nodes: dict, leaves: dict) -> list:
     so eval_plan pays no Python overhead beyond a flat loop with tuple unpacking.
 
     Returns a list of (func, params, base, delta, child_indices) where:
-      - leaf nodes: func=None, base=leaf array, delta=float, child_indices=[]
+      - leaf nodes: func=None, base=leaf array (CPU), delta=float, child_indices=[]
       - inner nodes: func=callable, params=dict, base=None, delta=None, child_indices=[int, ...]
     """
     id_to_idx = {nid: i for i, nid in enumerate(order)}
@@ -175,22 +180,33 @@ def compile_plan(order: list, nodes: dict, leaves: dict) -> list:
     return plan
 
 
-def eval_plan(plan: list, steps) -> np.ndarray:
+def eval_plan(plan: list, steps, use_gpu: bool = False) -> np.ndarray:
     """Evaluate a compiled plan. No dict lookups — only list indexing.
 
     Peak memory is O(depth) arrays: each slot is set to None as soon as its
     parent has consumed it.
+
+    If use_gpu=True, each leaf base is transferred to GPU on demand so that
+    only O(depth) arrays reside in VRAM at once. The result is returned as
+    a numpy array regardless.
     """
+    if use_gpu:
+        steps = cp.asarray(steps)
+
     buf = [None] * len(plan)
     for i, (func, params, base, delta, children) in enumerate(plan):
         if func is None:
-            buf[i] = base + delta * steps
+            buf[i] = (cp.asarray(base) if use_gpu else base) + delta * steps
         else:
             args = [buf[j] for j in children]
             for j in children:
                 buf[j] = None
             buf[i] = func(*args, **params)
-    return buf[-1]
+
+    result = buf[-1]
+    if use_gpu:
+        return cp.asnumpy(result)
+    return result
 
 
 def eval_linear(order: list, nodes: dict, leaves: dict, steps) -> np.ndarray:
