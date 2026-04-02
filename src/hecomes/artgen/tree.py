@@ -184,7 +184,7 @@ def eval_plan(plan: list, steps) -> np.ndarray:
     buf = [None] * len(plan)
     for i, (func, params, base, delta, children) in enumerate(plan):
         if func is None:
-            buf[i] = np.add(base, delta * steps)
+            buf[i] = base + delta * steps
         else:
             args = [buf[j] for j in children]
             for j in children:
