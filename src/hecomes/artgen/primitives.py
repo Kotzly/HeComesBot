@@ -230,7 +230,13 @@ def saddle(a, b):
 
 
 def safe_divide(a, b, eps=1e-3):
-    return a / np.where(np.abs(b) < eps, np.float32(eps), b)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        out = a / b
+    inf_mask = np.isinf(out)
+    nan_mask = np.isnan(out)
+    out[inf_mask] = np.sign(out[inf_mask]) * np.float32(1 / eps)
+    out[nan_mask] = np.float32(0.0)
+    return out
 
 
 def safe_modulus(a, b, eps=1e-10):
