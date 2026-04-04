@@ -103,13 +103,16 @@ less RAM (no pre-rendered leaf arrays) and is generally faster on GPU.
 hecomes-video-paths [options]
 ```
 
-All options from `hecomes-video` are supported (except `--step`, which does not apply). Additional options:
+All options from `hecomes-video` are supported. Additional options:
 
 | Flag | Description | Default |
 |------|-------------|---------|
+| `-s`, `--step` | Time multiplier — scales how fast paths evolve (`t = frame × step / fps`) | 0.1 |
 | `--path-personality` | Path to a personality JSON containing a `"paths"` section | same as `--personality` |
 | `--ode-solver` | ODE integration method: `euler` or `rk4` | `rk4` |
 | `--no-paths` | Build path trees but disable all animation (debug baseline) | off |
+
+`--step` controls animation speed independently of frame rate and duration. `step=1.0` means paths advance at wall-clock speed; `step=0.1` (default) slows them down tenfold so a 10-second video traverses only 1 second of path time — useful for slow, smooth motion. Values above 1.0 speed up or compress chaotic ODE trajectories.
 
 #### Path animation
 

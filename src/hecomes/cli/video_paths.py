@@ -113,6 +113,8 @@ def _parse_args():
                       help="Number of videos. Default: 1.")
     parser.add_option("-f", "--fps", dest="fps", type=int, default=30,
                       help="FPS. Default: 30.")
+    parser.add_option("-s", "--step", dest="step", type=float, default=1e-1,
+                      help="Step size multiplier. Default: 1e-2.")
     parser.add_option("-H", "--height", dest="height", type=int, default=256,
                       help="Video height. Default: 256.")
     parser.add_option("-W", "--width", dest="width", type=int, default=256,
@@ -220,7 +222,7 @@ def main():
 
     n_frames = args.fps * args.duration
     duration = float(args.duration)
-    all_steps = (np.arange(n_frames) / args.fps).astype(np.float32).reshape(-1, 1, 1, 1)
+    all_steps = (np.arange(n_frames) * args.step / args.fps).astype(np.float32).reshape(-1, 1, 1, 1)
     chunk_steps = [
         all_steps[s : s + args.chunk_size] for s in range(0, n_frames, args.chunk_size)
     ]
@@ -312,7 +314,7 @@ def main():
                         proc.stdin.close()
                         proc.wait()
         except KeyboardInterrupt:
-            pass
+            break
         print(f"Done: {output_path}")
 
 
