@@ -19,6 +19,7 @@ bot = ["markovify"]
 [project.scripts]
 hecomes-image = "hecomes.cli.image:main"
 hecomes-video = "hecomes.cli.video:main"
+hecomes-video-paths = "hecomes.cli.video_paths:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
