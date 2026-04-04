@@ -28,6 +28,8 @@ def _parse_args():
                       help=f"Color space: {', '.join(COLOR_SPACES)}. Default: rgb.")
     parser.add_option("--personality", dest="personality", type=str, default=None,
                       help="Personality name in data/personalities/. Default: personality.")
+    parser.add_option("--gpu", dest="gpu", action="store_true", default=False,
+                      help="Evaluate on GPU via CuPy. Default: CPU.")
     args, positional = parser.parse_args()
     output = positional[0] if positional else "output.png"
     return args, output
@@ -50,7 +52,7 @@ def main():
     steps = np.zeros((1, 1, 1, 1), dtype=np.float32)
     order = linearize(root_id, nodes)
     plan = compile_plan(order, nodes, leaves)
-    raw = eval_plan(plan, steps)
+    raw = eval_plan(plan, steps, use_gpu=args.gpu)
     img_8 = render_frame(raw, color_space, args.width, args.height)
 
     output_path = pathlib.Path(output_path)

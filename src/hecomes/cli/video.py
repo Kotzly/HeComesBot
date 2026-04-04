@@ -35,6 +35,7 @@ _trees = None
 _color_space = "rgb"
 _independent_channels = False
 _n_color = 1
+_use_gpu = False
 
 
 def _build(min_depth, max_depth, dx, dy, weights, seed, alpha):
@@ -48,15 +49,15 @@ def _build(min_depth, max_depth, dx, dy, weights, seed, alpha):
 def _compute_chunk(steps):
     if _independent_channels:
         channels = [
-            eval_plan(_trees[i], steps)[..., i : i + 1]
+            eval_plan(_trees[i], steps, use_gpu=_use_gpu)[..., i : i + 1]
             for i in range(3)
         ]
         raw = np.concatenate(channels, axis=-1)
     else:
-        raw = eval_plan(_trees[0], steps)
+        raw = eval_plan(_trees[0], steps, use_gpu=_use_gpu)
 
     extra = [
-        eval_plan(_trees[i], steps)[..., 0:1].clip(0, 1)
+        eval_plan(_trees[i], steps, use_gpu=_use_gpu)[..., 0:1].clip(0, 1)
         for i in range(_n_color, len(_trees))
     ]
 
@@ -119,18 +120,24 @@ def _parse_args():
                       help="Generate alpha channel from a tree.")
     parser.add_option("--personality", dest="personality", type=str, default=None,
                       help="Personality name in data/personalities/. Default: personality.")
+    parser.add_option("--gpu", dest="gpu", action="store_true", default=False,
+                      help="Evaluate on GPU via CuPy. Avoid with --processes > 1. Default: CPU.")
     args, _ = parser.parse_args()
     return args
 
 
 def main():
-    global _trees, _color_space, _independent_channels, _n_color
+    global _trees, _color_space, _independent_channels, _n_color, _use_gpu
 
     ffmpeg_bin = os.getenv("FFMPEG_BIN")
     if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ["PATH"]:
         os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
 
     args = _parse_args()
+
+    _use_gpu = args.gpu
+    if _use_gpu and args.n_process > 1:
+        print("Warning: --gpu with multiple workers splits VRAM across processes. Consider --processes 1.")
 
     if args.color_space not in ("rgb", "hsv", "cmy"):
         raise ValueError(f"Unknown color space '{args.color_space}'. Choose from: rgb, hsv, cmy.")
