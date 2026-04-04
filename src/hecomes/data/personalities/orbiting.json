@@ -1,0 +1,89 @@
+{
+    "0": {
+        "rand_color": 0.3,
+        "x_var": 0.5,
+        "y_var": 0.5,
+        "circle": 1.5,
+        "cone": 1.0,
+        "sphere": 1.2
+    },
+    "1": {
+        "cos": 1.0,
+        "sin": 1.0,
+        "blur": 0.1,
+        "sharpen": 0.0,
+        "sigmoid": 0.3,
+        "mirrored_sigmoid": 0.0,
+        "absolute_value": 0.2,
+        "color_rotate": 0.0,
+        "kaleidoscope": 0.0
+    },
+    "2": {
+        "add": 1.0,
+        "subtract": 0.8,
+        "multiply": 1.0,
+        "safe_divide": 0.4,
+        "safe_modulus": 0.0,
+        "saddle": 0.0,
+        "swap_phase_amplitude": 0.0,
+        "circular_mean": 0.0,
+        "circular_mean_far": 0.0,
+        "hue_diff": 0.0,
+        "hue_rotate": 0.0
+    },
+    "paths": {
+        "animation_probability": 0.7,
+        "path_weights": {
+            "CircularOrbit":   3.0,
+            "Oscillate":       1.5,
+            "AngularVelocity": 1.5,
+            "HuePath":         1.0,
+            "LinearDrift":     0.5
+        },
+        "omega_range":     [0.4, 3.0],
+        "amplitude_range": [0.05, 0.35],
+        "primitives": {
+            "circle": {
+                "animation_probability": 0.95,
+                "path_weights": {
+                    "CircularOrbit": 6.0,
+                    "Oscillate":     1.0,
+                    "HuePath":       1.5
+                }
+            },
+            "sphere": {
+                "animation_probability": 0.9,
+                "path_weights": {
+                    "CircularOrbit": 5.0,
+                    "Oscillate":     2.0,
+                    "HuePath":       1.0
+                }
+            },
+            "cone": {
+                "animation_probability": 0.8,
+                "path_weights": {
+                    "CircularOrbit": 4.0,
+                    "Oscillate":     2.0
+                }
+            },
+            "x_var": {
+                "path_weights": {
+                    "AngularVelocity": 5.0,
+                    "LinearDrift":     1.0
+                }
+            },
+            "y_var": {
+                "path_weights": {
+                    "AngularVelocity": 5.0,
+                    "LinearDrift":     1.0
+                }
+            },
+            "rand_color": {
+                "animation_probability": 0.8,
+                "path_weights": {
+                    "HuePath": 1.0
+                }
+            }
+        }
+    }
+}
