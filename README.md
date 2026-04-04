@@ -54,10 +54,15 @@ Options:
 | `-H`, `--height` | Image height | 512 |
 | `--min-depth` | Minimum tree depth | 6 |
 | `--max-depth` | Maximum tree depth | 12 |
+| `--alpha` | Leaf delta scale | 4e-3 |
 | `-c`, `--color-space` | Color space: `rgb`, `hsv`, `cmy` | `rgb` |
-| `--personality` | Personality JSON filename in `data/` | `personality.json` |
+| `--personality` | Personality JSON filename (without `.json`) in `data/personalities/` | `personality` |
+| `--gpu` | Evaluate on GPU via CuPy | off |
 
-### Video
+### Video (delta backend)
+
+Leaves are pre-rendered once; animation is a uniform linear drift on each leaf's output array.
+Fastest option; GPU benefit comes from eliminating PCIe leaf-array transfers.
 
 ```bash
 hecomes-video [options]
@@ -72,8 +77,7 @@ Options:
 | `-W`, `--width` | Video width | 256 |
 | `-H`, `--height` | Video height | 256 |
 | `-d`, `--duration` | Duration in seconds | 10 |
-| `-s`, `--step` | Alpha step between frames | 3e-3 |
-| `-S`, `--seed` | Fixed seed (one video) | random |
+| `-S`, `--seed` | Fixed seed (generates one video) | random |
 | `-e`, `--extension` | Output format: `webm`, `mp4`, `avi`, `gif`, `flv`, `ogg`, `mpeg` | `webm` |
 | `-b`, `--bitrate` | Constant bitrate | 6M |
 | `-C`, `--codec` | Video codec | auto |
@@ -82,10 +86,106 @@ Options:
 | `--min-depth` | Minimum tree depth | 6 |
 | `--max-depth` | Maximum tree depth | 12 |
 | `--color-space` | Color space: `rgb`, `hsv`, `cmy` | `rgb` |
-| `--independent-channels` | One tree per channel (H uses `personality_h.json`) | off |
+| `--independent-channels` | One tree per channel (H uses `hsv.json`) | off |
 | `--k` | Generate K channel from a tree (CMY only) | off |
 | `--alpha` | Generate alpha channel from a tree | off |
-| `--personality` | Personality JSON filename in `data/` | `personality.json` |
+| `--personality` | Personality JSON filename (without `.json`) | `personality` |
+| `--gpu` | Evaluate on GPU via CuPy | off |
+
+### Video (path animation backend)
+
+Leaf parameters are animated over time via path functions. Richer animation than the delta
+backend — positions can orbit, gradients can rotate, colors can cycle through HSV space, and
+parameters can follow ODEs. Slower per-chunk (primitives re-render each batch), but uses far
+less RAM (no pre-rendered leaf arrays) and is generally faster on GPU.
+
+```bash
+hecomes-video-paths [options]
+```
+
+All options from `hecomes-video` are supported (except `--step`, which does not apply). Additional options:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--path-personality` | Path to a personality JSON containing a `"paths"` section | same as `--personality` |
+| `--ode-solver` | ODE integration method: `euler` or `rk4` | `rk4` |
+| `--no-paths` | Build path trees but disable all animation (debug baseline) | off |
+
+#### Path animation
+
+Animation is controlled by the `"paths"` section of a personality JSON:
+
+```json
+{
+  "weights": { ... },
+  "paths": {
+    "animation_probability": 0.6,
+    "path_weights": {
+      "CircularOrbit":   3.0,
+      "Oscillate":       2.0,
+      "AngularVelocity": 2.0,
+      "HuePath":         1.5,
+      "LinearDrift":     1.0,
+      "LinearODEPath":   0.5
+    },
+    "omega_range":     [0.5, 4.0],
+    "amplitude_range": [0.05, 0.4],
+    "primitives": {
+      "circle": {
+        "animation_probability": 0.9,
+        "path_weights": { "CircularOrbit": 6.0, "HuePath": 1.0 }
+      },
+      "x_var": {
+        "path_weights": { "AngularVelocity": 5.0 }
+      }
+    }
+  }
+}
+```
+
+- `animation_probability` — per animatable parameter, probability of getting a path (vs. staying fixed).
+- `path_weights` — relative weights over path types. Types absent or at weight 0 are never chosen.
+- `omega_range`, `amplitude_range` — sampling ranges for oscillation frequency and amplitude.
+- `primitives` — per-primitive overrides. Any key absent from the override falls back to the top-level value.
+
+#### Available path types
+
+| Type | Animates | Periodic | Description |
+|------|----------|----------|-------------|
+| `LinearDrift` | any scalar | no | `param(t) = start + rate * t` |
+| `Oscillate` | any scalar | yes | `param(t) = base + A·sin(ω·t + φ)` |
+| `AngularVelocity` | `angle` | yes | `angle(t) = (angle₀ + ω·t) % 2π` |
+| `CircularOrbit` | `cx`, `cy` | yes | Center moves along a circle |
+| `HuePath` | `color` | yes | Hue cycles; S and V oscillate independently in HSV space |
+| `WaypointPath` | any | optional | Piecewise interpolation through keyframes (`"linear"`, `"step"`, `"cubic"`) |
+| `LinearODEPath` | any | no | `dy/dt = A·y + b`; fully serializable |
+| `GeneralODEPath` | any | no | User-defined ODE; subclass and register in `PATH_REGISTRY` |
+
+#### Adding a custom path type
+
+```python
+import numpy as np
+from hecomes.artgen.paths import GeneralODEPath, PATH_REGISTRY
+
+class LorenzPath(GeneralODEPath):
+    @property
+    def state_dim(self): return 3
+
+    @property
+    def param_names(self): return ["cx", "cy", "rx"]
+
+    def y0(self): return np.array([1.0, 0.0, 0.5])
+
+    def _rhs(self, y, t):
+        x, yy, z = y
+        return np.array([
+            10.0 * (yy - x),
+            x * (28.0 - z) - yy,
+            x * yy - (8/3) * z,
+        ])
+
+PATH_REGISTRY["LorenzPath"] = LorenzPath
+```
 
 ### Bot (legacy)
 
@@ -107,10 +207,14 @@ Options: `-s` seed, `-d` dimensions, `-o` output path, `-f` fontsize, `-D` use `
 
 ## Personality files
 
-The personality files control the probability of each function being selected when building the expression tree. Each function is assigned a weight — higher means more likely, zero means never used.
+Personality files are JSON documents in `data/personalities/`. They control two things:
+
+**Tree structure weights** — the probability of each function being selected when building the expression tree. Each function is assigned a weight; higher means more likely, zero means never used.
 
 - `personality.json` — used for RGB/CMY generation and for S/V channels in HSV mode.
-- `personality_h.json` — used for the H channel in `--independent-channels` HSV mode. Enables circular hue functions.
+- `hsv.json` — used for the H channel in `--independent-channels` HSV mode. Enables circular hue functions.
+
+**Path animation config** (optional, `hecomes-video-paths` only) — an optional top-level `"paths"` key controls how leaf parameters are animated. See the [path animation section](#path-animation) above for the full structure. Per-primitive overrides are supported under `"paths": { "primitives": { "circle": { ... } } }`.
 
 The functions are grouped by arity:
 - **Arity 0 (leaves):** produce a base image — `rand_color`, `x_var`, `y_var`, `circle`, `cone`.
