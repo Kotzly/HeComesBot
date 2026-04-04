@@ -510,6 +510,197 @@ class GeneralODEPath(ODEPath, ABC):
     pass
 
 
+# ── Built-in GeneralODEPath examples ─────────────────────────────────────────
+
+
+class LorenzPath(GeneralODEPath):
+    """Lorenz attractor ODE — animates ``cx``, ``cy``, and ``rx``.
+
+    The classic chaotic attractor ``(σ, ρ, β) = (10, 28, 8/3)``.  Raw state
+    values range roughly x, y ∈ [−20, 20] and z ∈ [0, 50]; scale factors map
+    them into typical leaf param ranges::
+
+        cx(t) = x(t) / cx_scale        # target range [-2, 2]  → cx_scale ≈ 10
+        cy(t) = y(t) / cy_scale        # target range [-2, 2]  → cy_scale ≈ 10
+        rx(t) = clip(z(t) / rx_scale,  # target range [0.05, 0.95] → rx_scale ≈ 50
+                     0.05, 0.95)
+
+    Parameters
+    ----------
+    sigma, rho, beta:
+        System parameters.  Default ``(10, 28, 8/3)`` gives the chaotic regime.
+    y0_init:
+        Initial state ``[x₀, y₀, z₀]``.  Default ``[1.0, 0.0, 0.0]``.
+    cx_scale, cy_scale, rx_scale:
+        Divisors applied after table lookup.  Adjust to fit your canvas size.
+    """
+
+    def __init__(
+        self,
+        sigma: float = 10.0,
+        rho: float = 28.0,
+        beta: float = 8.0 / 3.0,
+        y0_init: list | None = None,
+        cx_scale: float = 10.0,
+        cy_scale: float = 10.0,
+        rx_scale: float = 50.0,
+    ):
+        super().__init__()
+        self.sigma = float(sigma)
+        self.rho = float(rho)
+        self.beta = float(beta)
+        self._y0_init: list = list(y0_init or [1.0, 0.0, 0.0])
+        self.cx_scale = float(cx_scale)
+        self.cy_scale = float(cy_scale)
+        self.rx_scale = float(rx_scale)
+
+    @property
+    def state_dim(self) -> int:
+        return 3
+
+    @property
+    def param_names(self) -> list[str]:
+        return ["cx", "cy", "rx"]
+
+    def y0(self) -> np.ndarray:
+        return np.array(self._y0_init, dtype=np.float64)
+
+    def _rhs(self, y: np.ndarray, t: float) -> np.ndarray:
+        x, yy, z = y
+        return np.array([
+            self.sigma * (yy - x),
+            x * (self.rho - z) - yy,
+            x * yy - self.beta * z,
+        ])
+
+    def __call__(self, t: float) -> dict:
+        if self._table is None:
+            raise RuntimeError("LorenzPath.precompute() must be called before evaluation.")
+        idx = max(0, min(int(round(float(t) / self._dt)), len(self._table) - 1))
+        x, y, z = self._table[idx]
+        return {
+            "cx": x / self.cx_scale,
+            "cy": y / self.cy_scale,
+            "rx": float(np.clip(abs(z) / self.rx_scale, 0.05, 0.95)),
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "LorenzPath",
+            "sigma": self.sigma,
+            "rho": self.rho,
+            "beta": self.beta,
+            "y0": self._y0_init,
+            "cx_scale": self.cx_scale,
+            "cy_scale": self.cy_scale,
+            "rx_scale": self.rx_scale,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LorenzPath":
+        return cls(
+            d.get("sigma", 10.0),
+            d.get("rho", 28.0),
+            d.get("beta", 8.0 / 3.0),
+            d.get("y0"),
+            d.get("cx_scale", 10.0),
+            d.get("cy_scale", 10.0),
+            d.get("rx_scale", 50.0),
+        )
+
+
+class VanDerPolPath(GeneralODEPath):
+    """Van der Pol oscillator ODE — animates ``cx`` and ``cy``.
+
+    A non-linear oscillator with a stable limit cycle.  Unlike purely sinusoidal
+    motion, the Van der Pol cycle has asymmetric acceleration: it builds slowly
+    near the extremes and relaxes quickly through the center, producing smooth
+    but non-uniform orbiting motion.
+
+    The system (rewritten as first order)::
+
+        dx/dt = y
+        dy/dt = μ(1 − x²)y − x
+
+    With ``μ = 1`` the limit cycle has amplitude ≈ 2 for ``x`` and ≈ 2 for
+    ``y``.  Larger ``μ`` produces sharper relaxation oscillations with faster
+    transitions.  Scale factors map the state into leaf param ranges::
+
+        cx(t) = x(t) / cx_scale   # x amplitude ≈ 2 → cx_scale = 1 keeps cx in [-2, 2]
+        cy(t) = y(t) / cy_scale   # y amplitude ≈ 2 → cy_scale = 1 keeps cy in [-2, 2]
+
+    Parameters
+    ----------
+    mu:
+        Damping / non-linearity strength.  ``μ = 1`` (default) gives smooth
+        oscillation; ``μ ≥ 3`` gives visible relaxation behaviour.
+    y0_init:
+        Initial conditions ``[x₀, dx/dt₀]``.  Default ``[2.0, 0.0]`` starts
+        approximately on the limit cycle.
+    cx_scale, cy_scale:
+        Divisors applied after table lookup.
+    """
+
+    def __init__(
+        self,
+        mu: float = 1.0,
+        y0_init: list | None = None,
+        cx_scale: float = 1.0,
+        cy_scale: float = 1.0,
+    ):
+        super().__init__()
+        self.mu = float(mu)
+        self._y0_init: list = list(y0_init or [2.0, 0.0])
+        self.cx_scale = float(cx_scale)
+        self.cy_scale = float(cy_scale)
+
+    @property
+    def state_dim(self) -> int:
+        return 2
+
+    @property
+    def param_names(self) -> list[str]:
+        return ["cx", "cy"]
+
+    def y0(self) -> np.ndarray:
+        return np.array(self._y0_init, dtype=np.float64)
+
+    def _rhs(self, y: np.ndarray, t: float) -> np.ndarray:
+        x, dxdt = y
+        return np.array([
+            dxdt,
+            self.mu * (1.0 - x ** 2) * dxdt - x,
+        ])
+
+    def __call__(self, t: float) -> dict:
+        if self._table is None:
+            raise RuntimeError("VanDerPolPath.precompute() must be called before evaluation.")
+        idx = max(0, min(int(round(float(t) / self._dt)), len(self._table) - 1))
+        x, y = self._table[idx]
+        return {
+            "cx": x / self.cx_scale,
+            "cy": y / self.cy_scale,
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "VanDerPolPath",
+            "mu": self.mu,
+            "y0": self._y0_init,
+            "cx_scale": self.cx_scale,
+            "cy_scale": self.cy_scale,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "VanDerPolPath":
+        return cls(
+            d.get("mu", 1.0),
+            d.get("y0"),
+            d.get("cx_scale", 1.0),
+            d.get("cy_scale", 1.0),
+        )
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 PATH_REGISTRY: dict[str, type[Path]] = {
@@ -520,6 +711,8 @@ PATH_REGISTRY: dict[str, type[Path]] = {
     "HuePath": HuePath,
     "WaypointPath": WaypointPath,
     "LinearODEPath": LinearODEPath,
+    "LorenzPath": LorenzPath,
+    "VanDerPolPath": VanDerPolPath,
 }
 
 
