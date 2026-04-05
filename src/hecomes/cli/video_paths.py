@@ -313,6 +313,7 @@ def main():
                         pool.terminate()
                         proc.stdin.close()
                         proc.wait()
+                        raise
         except KeyboardInterrupt:
             break
         print(f"Done: {output_path}")
