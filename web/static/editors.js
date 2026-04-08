@@ -81,11 +81,11 @@ export function buildNodeParamEditor(node) {
   const p = node.params || {};
 
   specs.forEach(spec => {
-    if (spec.type === 'float') {
+    if (spec.choices) {
+      controls.appendChild(makeSelectRow(spec.label, `np-${spec.name}`, spec.choices, p[spec.name] ?? spec.choices[0]));
+    } else if (spec.type === 'float') {
       const val = p[spec.name] ?? spec.min ?? 0;
       controls.appendChild(makeSliderRow(spec.label, `np-${spec.name}`, spec.min, spec.max, 0.01, val));
-    } else if (spec.type === 'int' && spec.choices) {
-      controls.appendChild(makeSelectRow(spec.label, `np-${spec.name}`, spec.choices, p[spec.name] ?? spec.choices[0]));
     } else if (spec.type === 'angles') {
       const angles = p[spec.name] || [0, 0, 0];
       ['Z', 'Y', 'X'].forEach((axis, i) => {
