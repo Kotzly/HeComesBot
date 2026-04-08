@@ -34,30 +34,36 @@ def _gen_rand_color():
     return {"color": np.random.rand(3).tolist()}
 
 
-def _rotated_gradient(dx, dy, angle=None, color=None):
+def _rotated_gradient(dx, dy, angle=None, color=None, px=None, py=None):
     if angle is None:
         angle = np.random.rand() * 2 * np.pi
     if color is None:
         color = np.random.rand(3).astype(np.float32)
     else:
         color = np.asarray(color, dtype=np.float32)
+    if px is None:
+        px = float(np.random.uniform(-1.0, 1.0))
+    if py is None:
+        py = float(np.random.uniform(-1.0, 1.0))
     x, y = linear_mesh(dx=dx, dy=dy)
-    grad = np.cos(angle) * x + np.sin(angle) * y
+    grad = np.cos(angle) * (x - px) + np.sin(angle) * (y - py)
     return (grad[:, :, np.newaxis] * color.reshape(1, 1, 3)).astype(np.float32)
 
 
-def x_var(dx=None, dy=None, angle=None, color=None):
-    return _rotated_gradient(dx, dy, angle=angle, color=color)
+def x_var(dx=None, dy=None, angle=None, color=None, px=None, py=None):
+    return _rotated_gradient(dx, dy, angle=angle, color=color, px=px, py=py)
 
 
-def y_var(dx=None, dy=None, angle=None, color=None):
-    return _rotated_gradient(dx, dy, angle=angle, color=color)
+def y_var(dx=None, dy=None, angle=None, color=None, px=None, py=None):
+    return _rotated_gradient(dx, dy, angle=angle, color=color, px=px, py=py)
 
 
 def _gen_gradient():
     return {
         "angle": float(np.random.rand() * 2 * np.pi),
         "color": np.random.rand(3).tolist(),
+        "px": float(np.random.uniform(-1.0, 1.0)),
+        "py": float(np.random.uniform(-1.0, 1.0)),
     }
 
 
