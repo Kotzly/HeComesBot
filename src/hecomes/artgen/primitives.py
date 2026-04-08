@@ -284,6 +284,137 @@ def _gen_swirl():
     }
 
 
+# ── Unary warp: ripple ───────────────────────────────────────────────────────
+
+
+def _ripple_frame(image, ax, ay, kx, ky, phase_x, phase_y):
+    dy, dx, _ = image.shape
+    xs, ys = linear_mesh(dx=dx, dy=dy)
+    x_src = xs + ax * np.sin(kx * ys + phase_x)
+    y_src = ys + ay * np.sin(ky * xs + phase_y)
+    col_src = (x_src + 1) / 2 * (dx - 1)
+    row_src = (y_src + 1) / 2 * (dy - 1)
+    return np.stack(
+        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
+         for c in range(3)],
+        axis=-1,
+    ).astype(np.float32)
+
+
+def ripple(x, ax=None, ay=None, kx=None, ky=None, phase_x=None, phase_y=None):
+    image = x[0]
+    if not is_valid_shape(image):
+        return x
+    if ax is None:
+        ax = float(np.random.uniform(0.05, 0.3))
+    if ay is None:
+        ay = float(np.random.uniform(0.05, 0.3))
+    if kx is None:
+        kx = float(np.random.uniform(2.0, 8.0))
+    if ky is None:
+        ky = float(np.random.uniform(2.0, 8.0))
+    if phase_x is None:
+        phase_x = float(np.random.uniform(0.0, 2 * np.pi))
+    if phase_y is None:
+        phase_y = float(np.random.uniform(0.0, 2 * np.pi))
+    return np.stack([_ripple_frame(x[i], ax, ay, kx, ky, phase_x, phase_y) for i in range(x.shape[0])])
+
+
+def _gen_ripple():
+    return {
+        "ax": float(np.random.uniform(0.05, 0.3)),
+        "ay": float(np.random.uniform(0.05, 0.3)),
+        "kx": float(np.random.uniform(2.0, 8.0)),
+        "ky": float(np.random.uniform(2.0, 8.0)),
+        "phase_x": float(np.random.uniform(0.0, 2 * np.pi)),
+        "phase_y": float(np.random.uniform(0.0, 2 * np.pi)),
+    }
+
+
+# ── Unary warp: pinch/bulge ───────────────────────────────────────────────────
+
+
+def _pinch_frame(image, cx, cy, strength):
+    dy, dx, _ = image.shape
+    xs, ys = linear_mesh(dx=dx, dy=dy)
+    rx = xs - cx
+    ry = ys - cy
+    eps = 1e-6
+    r = np.sqrt(rx**2 + ry**2) + eps
+    # r_src = r^(1 + strength): strength > 0 → bulge, strength < 0 → pinch
+    r_src = np.power(r, 1.0 + strength)
+    scale = r_src / r
+    x_src = cx + rx * scale
+    y_src = cy + ry * scale
+    col_src = (x_src + 1) / 2 * (dx - 1)
+    row_src = (y_src + 1) / 2 * (dy - 1)
+    return np.stack(
+        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
+         for c in range(3)],
+        axis=-1,
+    ).astype(np.float32)
+
+
+def pinch(x, cx=None, cy=None, strength=None):
+    image = x[0]
+    if not is_valid_shape(image):
+        return x
+    if cx is None:
+        cx = float(np.random.uniform(-0.3, 0.3))
+    if cy is None:
+        cy = float(np.random.uniform(-0.3, 0.3))
+    if strength is None:
+        strength = float(np.random.choice([-1, 1]) * np.random.uniform(0.2, 0.8))
+    return np.stack([_pinch_frame(x[i], cx, cy, strength) for i in range(x.shape[0])])
+
+
+def _gen_pinch():
+    return {
+        "cx": float(np.random.uniform(-0.3, 0.3)),
+        "cy": float(np.random.uniform(-0.3, 0.3)),
+        "strength": float(np.random.choice([-1, 1]) * np.random.uniform(0.2, 0.8)),
+    }
+
+
+# ── Unary warp: polar remap ───────────────────────────────────────────────────
+
+
+def _polar_warp_frame(image, cx, cy):
+    dy, dx, _ = image.shape
+    xs, ys = linear_mesh(dx=dx, dy=dy)
+    rx = xs - cx
+    ry = ys - cy
+    r = np.sqrt(rx**2 + ry**2)
+    theta = (np.arctan2(ry, rx) + 2 * np.pi) % (2 * np.pi)  # [0, 2π]
+    # angle → column, radius → row (r_max = sqrt(2) covers full [-1,1]^2 diagonal)
+    r_max = np.sqrt(2.0)
+    col_src = theta / (2 * np.pi) * (dx - 1)
+    row_src = r / r_max * (dy - 1)
+    return np.stack(
+        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
+         for c in range(3)],
+        axis=-1,
+    ).astype(np.float32)
+
+
+def polar_warp(x, cx=None, cy=None):
+    image = x[0]
+    if not is_valid_shape(image):
+        return x
+    if cx is None:
+        cx = float(np.random.uniform(-0.3, 0.3))
+    if cy is None:
+        cy = float(np.random.uniform(-0.3, 0.3))
+    return np.stack([_polar_warp_frame(x[i], cx, cy) for i in range(x.shape[0])])
+
+
+def _gen_polar_warp():
+    return {
+        "cx": float(np.random.uniform(-0.3, 0.3)),
+        "cy": float(np.random.uniform(-0.3, 0.3)),
+    }
+
+
 # ── Binary functions (arity 2) ────────────────────────────────────────────────
 
 
@@ -310,6 +441,58 @@ def swap_phase_amplitude(a, b, axes=(1, 2)):
     phi_a = np.arctan2(np.imag(fft_a), np.real(fft_a))
     swapped_a = np.abs(fft_b) * (np.cos(phi_a) + np.sin(phi_a) * 1j)
     return np.abs(np.fft.ifft2(swapped_a, axes=axes)).astype(np.float32)
+
+
+# ── Ternary functions (arity 3) ──────────────────────────────────────────────
+
+_LUMA_WEIGHTS = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
+
+
+def _luminance(img):
+    """Collapse (..., 3) → (...) using BT.709 luminance weights."""
+    return (img * _LUMA_WEIGHTS).sum(axis=-1)
+
+
+def blend(a, b, mask):
+    m = np.clip(mask, 0.0, 1.0)
+    return a * m + b * (1.0 - m)
+
+
+def rgb_compose(a, b, c):
+    out = np.empty_like(a)
+    out[..., 0] = _luminance(a)
+    out[..., 1] = _luminance(b)
+    out[..., 2] = _luminance(c)
+    return out
+
+
+def warp_by(img, dx_field, dy_field, amplitude=0.3):
+    if cp is not None:
+        if isinstance(img, cp.ndarray):
+            img = cp.asnumpy(img)
+        if isinstance(dx_field, cp.ndarray):
+            dx_field = cp.asnumpy(dx_field)
+        if isinstance(dy_field, cp.ndarray):
+            dy_field = cp.asnumpy(dy_field)
+    chunk_size, dy_size, dx_size, _ = img.shape
+    xs, ys = linear_mesh(dx=dx_size, dy=dy_size)
+    frames = []
+    for k in range(chunk_size):
+        frame = img[k]
+        x_src = xs + amplitude * _luminance(dx_field[k])
+        y_src = ys + amplitude * _luminance(dy_field[k])
+        col_src = (x_src + 1) / 2 * (dx_size - 1)
+        row_src = (y_src + 1) / 2 * (dy_size - 1)
+        frames.append(np.stack(
+            [map_coordinates(frame[:, :, c], [row_src, col_src], order=1, mode="nearest")
+             for c in range(3)],
+            axis=-1,
+        ).astype(np.float32))
+    return np.stack(frames, axis=0)
+
+
+def _gen_warp_by():
+    return {"amplitude": float(np.random.uniform(0.1, 0.5))}
 
 
 # ── Circular hue functions (arity 2, HSV H-channel) ──────────────────────────

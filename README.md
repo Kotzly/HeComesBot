@@ -220,13 +220,16 @@ Personality files are JSON documents in `data/personalities/`. They control two 
 **Path animation config** (optional, `hecomes-video-paths` only) — an optional top-level `"paths"` key controls how leaf parameters are animated. See the [path animation section](#path-animation) above for the full structure. Per-primitive overrides are supported under `"paths": { "primitives": { "circle": { ... } } }`.
 
 The functions are grouped by arity:
-- **Arity 0 (leaves):** produce a base image — `rand_color`, `x_var`, `y_var`, `circle`, `cone`.
-- **Arity 1 (unary):** transform one image — `blur`, `sharpen`, `sigmoid`, `mirrored_sigmoid`, `absolute_value`, `color_rotate`, `kaleidoscope`.
+
+- **Arity 0 (leaves):** produce a base image — `rand_color`, `x_var`, `y_var`, `circle`, `cone`, `sphere`.
+- **Arity 1 (unary):** transform one image — `blur`, `sharpen`, `sigmoid`, `mirrored_sigmoid`, `absolute_value`, `color_rotate`, `kaleidoscope`, `swirl`, `ripple`, `pinch`, `polar_warp`.
 - **Arity 2 (binary):** combine two images — `add`, `subtract`, `multiply`, `safe_divide`, `safe_modulus`, `saddle`, `swap_phase_amplitude`, `circular_mean`, `circular_mean_far`, `hue_diff`, `hue_rotate`.
+- **Arity 3 (ternary):** combine three images — `blend`, `rgb_compose`, `warp_by`.
 
 Notable functions:
 
 - **cone** — elliptical cone function; produces concentric circles/ellipses.
+- **sphere** — soft radial gradient, falls off as the distance from center grows.
 - **saddle** — hyperbolic paraboloid (`x² - y²`). Costly; use low probability.
 - **swap_phase_amplitude** — swaps FFT phase/magnitude between two images. Very costly.
 - **kaleidoscope** — not recommended above 400×400.
@@ -234,3 +237,18 @@ Notable functions:
 - **circular_mean / circular_mean_far** — mean of two hue values along the shorter/longer arc.
 - **hue_diff** — angular distance between two hue values, in [0, 0.5].
 - **hue_rotate** — circular addition of hue values.
+
+#### Pixel warp operators
+
+All warp operators use backward mapping: for each output pixel at `(x, y)`, they compute a source coordinate `(x_src, y_src)` and sample the input via bilinear interpolation. Out-of-bounds coordinates are clamped to the image edge.
+
+- **swirl** — rotates pixels around a center point. Rotation angle at radius `r` is `strength × r^power`. Negative power (e.g. `-2`) gives inner-faster rotation (black hole); positive gives outer-faster (galaxy spiral). Params: `cx`, `cy`, `strength`, `power`.
+- **ripple** — sinusoidal displacement: `x_src = x + ax·sin(kx·y + phase_x)`, `y_src = y + ay·sin(ky·x + phase_y)`. The phase params are animatable — advancing them over time creates flowing water or flag-waving effects. Params: `ax`, `ay`, `kx`, `ky`, `phase_x`, `phase_y`.
+- **pinch** — radial lens distortion. Source radius `r_src = r^(1 + strength)`. Positive strength: content from the center spreads outward (bulge/fisheye). Negative strength: content is pulled inward (pinch/pincushion). Params: `cx`, `cy`, `strength`.
+- **polar_warp** — remaps the image from Cartesian to polar coordinates centered at `(cx, cy)`. The angular coordinate of each output pixel indexes the horizontal axis of the source; the radial coordinate indexes the vertical axis. Circular or radially symmetric content in the source gets "unrolled" into rectangular bands.
+
+#### Ternary operators
+
+- **blend(a, b, mask)** — per-pixel mix: `a × clip(mask, 0, 1) + b × (1 − clip(mask, 0, 1))`. The mask is a full tree-generated image; its pixel values determine which source dominates at each location. Bright regions in the mask show `a`; dark regions show `b`.
+- **rgb_compose(a, b, c)** — collapses each input to a luminance scalar (BT.709 weights) and assembles R, G, B from the three subtrees respectively. Gives independent per-channel control that no binary combination can achieve.
+- **warp_by(img, dx_field, dy_field)** — data-driven pixel warp. For each output pixel at `(x, y)`, the luminance of `dx_field` and `dy_field` at that position gives the displacement: `x_src = x + amplitude × lum(dx_field)`, `y_src = y + amplitude × lum(dy_field)`. The displacement fields are themselves tree-generated images, so the warp shape inherits the structure of those subtrees — e.g. a `swirl` output as a field produces a spiral-shaped warp, a `cone` produces radial displacement. Param: `amplitude`.

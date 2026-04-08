@@ -9,7 +9,11 @@ from hecomes.artgen.primitives import (
     _gen_cone,
     _gen_gradient,
     _gen_kaleidoscope,
+    _gen_pinch,
+    _gen_polar_warp,
     _gen_rand_color,
+    _gen_ripple,
+    _gen_warp_by,
     _gen_sphere,
     _gen_swirl,
     absolute_value,
@@ -23,7 +27,13 @@ from hecomes.artgen.primitives import (
     hue_rotate,
     kaleidoscope,
     mirrored_sigmoid,
+    blend,
+    pinch,
+    polar_warp,
     rand_color,
+    rgb_compose,
+    ripple,
+    warp_by,
     saddle,
     safe_divide,
     safe_modulus,
@@ -240,6 +250,38 @@ FUNCTION_REGISTRY = [
         ],
         generate=_gen_swirl,
     ),
+    FunctionDef(
+        ripple,
+        1,
+        params=[
+            {"name": "ax", "type": "float", "min": 0.0, "max": 0.5, "label": "Amplitude X", "animatable": True},
+            {"name": "ay", "type": "float", "min": 0.0, "max": 0.5, "label": "Amplitude Y", "animatable": True},
+            {"name": "kx", "type": "float", "min": 1.0, "max": 12.0, "label": "Frequency X"},
+            {"name": "ky", "type": "float", "min": 1.0, "max": 12.0, "label": "Frequency Y"},
+            {"name": "phase_x", "type": "float", "min": 0.0, "max": 6.2832, "label": "Phase X", "animatable": True},
+            {"name": "phase_y", "type": "float", "min": 0.0, "max": 6.2832, "label": "Phase Y", "animatable": True},
+        ],
+        generate=_gen_ripple,
+    ),
+    FunctionDef(
+        pinch,
+        1,
+        params=[
+            {"name": "cx", "type": "float", "min": -1.0, "max": 1.0, "label": "Center X", "animatable": True},
+            {"name": "cy", "type": "float", "min": -1.0, "max": 1.0, "label": "Center Y", "animatable": True},
+            {"name": "strength", "type": "float", "min": -0.9, "max": 0.9, "label": "Strength", "animatable": True},
+        ],
+        generate=_gen_pinch,
+    ),
+    FunctionDef(
+        polar_warp,
+        1,
+        params=[
+            {"name": "cx", "type": "float", "min": -1.0, "max": 1.0, "label": "Center X", "animatable": True},
+            {"name": "cy", "type": "float", "min": -1.0, "max": 1.0, "label": "Center Y", "animatable": True},
+        ],
+        generate=_gen_polar_warp,
+    ),
     # ── Binary (arity 2) ──────────────────────────────────────────────────────
     FunctionDef(np.add, 2),
     FunctionDef(np.subtract, 2),
@@ -253,6 +295,17 @@ FUNCTION_REGISTRY = [
     FunctionDef(circular_mean_far, 2),
     FunctionDef(hue_diff, 2),
     FunctionDef(hue_rotate, 2),
+    # ── Ternary (arity 3) ─────────────────────────────────────────────────────
+    FunctionDef(blend, 3),
+    FunctionDef(rgb_compose, 3),
+    FunctionDef(
+        warp_by,
+        3,
+        params=[
+            {"name": "amplitude", "type": "float", "min": 0.0, "max": 1.0, "label": "Amplitude"},
+        ],
+        generate=_gen_warp_by,
+    ),
 ]
 
 
