@@ -11,6 +11,7 @@ from hecomes.artgen.primitives import (
     _gen_kaleidoscope,
     _gen_rand_color,
     _gen_sphere,
+    _gen_swirl,
     absolute_value,
     blur,
     circle,
@@ -30,6 +31,7 @@ from hecomes.artgen.primitives import (
     sigmoid,
     sphere,
     swap_phase_amplitude,
+    swirl,
     x_var,
     y_var,
 )
@@ -214,6 +216,29 @@ FUNCTION_REGISTRY = [
             },
         ],
         generate=_gen_kaleidoscope,
+    ),
+    FunctionDef(
+        swirl,
+        1,
+        params=[
+            {"name": "cx", "type": "float", "min": -1.0, "max": 1.0, "label": "Center X", "animatable": True},
+            {"name": "cy", "type": "float", "min": -1.0, "max": 1.0, "label": "Center Y", "animatable": True},
+            {
+                "name": "strength",
+                "type": "float",
+                "min": -3.1416,
+                "max": 3.1416,
+                "label": "Strength",
+                "animatable": True,
+            },
+            {
+                "name": "power",
+                "type": "float",
+                "choices": [-2.0, -1.0, 1.0, 2.0],
+                "label": "Power",
+            },
+        ],
+        generate=_gen_swirl,
     ),
     # ── Binary (arity 2) ──────────────────────────────────────────────────────
     FunctionDef(np.add, 2),

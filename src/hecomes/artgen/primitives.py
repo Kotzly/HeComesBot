@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.interpolate import NearestNDInterpolator
+from scipy.ndimage import map_coordinates
 from scipy.spatial.transform import Rotation as R
 
 try:
@@ -231,6 +232,56 @@ def _gen_kaleidoscope():
     n = int(np.random.choice([3, 5, 6, 7, 8], p=p))
     phi = 2 * np.pi / n
     return {"n": n, "phase": float(np.random.rand() * phi)}
+
+
+# ── Unary warp: swirl ────────────────────────────────────────────────────────
+
+
+def _swirl_frame(image, cx, cy, strength, power):
+    dy, dx, _ = image.shape
+    xs, ys = linear_mesh(dx=dx, dy=dy)
+    rx = xs - cx
+    ry = ys - cy
+    eps = 1e-6
+    r = np.sqrt(rx**2 + ry**2) + eps
+    theta = np.arctan2(ry, rx)
+
+    rot = strength * r**power
+    theta_src = theta - rot
+    x_src = cx + r * np.cos(theta_src)
+    y_src = cy + r * np.sin(theta_src)
+
+    col_src = (x_src + 1) / 2 * (dx - 1)
+    row_src = (y_src + 1) / 2 * (dy - 1)
+    return np.stack(
+        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
+         for c in range(3)],
+        axis=-1,
+    ).astype(np.float32)
+
+
+def swirl(x, cx=None, cy=None, strength=None, power=None):
+    image = x[0]
+    if not is_valid_shape(image):
+        return x
+    if cx is None:
+        cx = float(np.random.uniform(-0.5, 0.5))
+    if cy is None:
+        cy = float(np.random.uniform(-0.5, 0.5))
+    if strength is None:
+        strength = float(np.random.choice([-1, 1]) * np.random.uniform(0.3, np.pi))
+    if power is None:
+        power = -2.0
+    return np.stack([_swirl_frame(x[i], cx, cy, strength, power) for i in range(x.shape[0])])
+
+
+def _gen_swirl():
+    return {
+        "cx": float(np.random.uniform(-0.5, 0.5)),
+        "cy": float(np.random.uniform(-0.5, 0.5)),
+        "strength": float(np.random.choice([-1, 1]) * np.random.uniform(0.3, np.pi)),
+        "power": float(np.random.choice([-2.0, -1.0, 1.0, 2.0])),
+    }
 
 
 # ── Binary functions (arity 2) ────────────────────────────────────────────────

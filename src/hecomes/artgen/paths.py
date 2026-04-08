@@ -323,6 +323,95 @@ class WaypointPath(Path):
                    d.get("interpolation", "linear"), d.get("loop", False))
 
 
+# ── Random walk path ─────────────────────────────────────────────────────────
+
+
+class RandomWalkPath(Path):
+    """2D random walk for ``(cx, cy)`` — smooth PCHIP-interpolated motion.
+
+    Generates random waypoints at evenly-spaced times and interpolates with a
+    PCHIP spline (monotone — never overshoots the waypoint range).
+
+    Parameters
+    ----------
+    cx0, cy0:
+        Starting position.
+    n_steps:
+        Number of random steps (total waypoints = n_steps + 1).
+    step_size:
+        Maximum displacement per step; each step is sampled uniformly in
+        ``[0, step_size]`` at a random angle.
+    duration:
+        Total animation duration in seconds (time of last waypoint).
+    bound:
+        Position is clamped to ``[-bound, bound]`` on each axis after each step.
+    seed:
+        Optional integer seed for reproducibility.
+    """
+
+    periodic = False
+
+    def __init__(
+        self,
+        cx0: float,
+        cy0: float,
+        n_steps: int,
+        step_size: float,
+        duration: float,
+        bound: float = 1.5,
+        seed: int | None = None,
+    ):
+        from scipy.interpolate import PchipInterpolator
+
+        self.cx0 = float(cx0)
+        self.cy0 = float(cy0)
+        self.n_steps = int(n_steps)
+        self.step_size = float(step_size)
+        self.duration = float(duration)
+        self.bound = float(bound)
+        self.seed = seed
+
+        rng = np.random.RandomState(seed)
+        times = np.linspace(0.0, duration, self.n_steps + 1)
+        pos = np.zeros((self.n_steps + 1, 2))
+        pos[0] = [self.cx0, self.cy0]
+        for i in range(1, self.n_steps + 1):
+            angle = rng.uniform(0.0, 2.0 * np.pi)
+            step = rng.uniform(0.0, self.step_size)
+            pos[i, 0] = float(np.clip(pos[i - 1, 0] + step * math.cos(angle), -bound, bound))
+            pos[i, 1] = float(np.clip(pos[i - 1, 1] + step * math.sin(angle), -bound, bound))
+
+        self._times = times
+        self._cx_spline = PchipInterpolator(times, pos[:, 0])
+        self._cy_spline = PchipInterpolator(times, pos[:, 1])
+
+    def __call__(self, t: float) -> dict:
+        t_c = float(np.clip(t, self._times[0], self._times[-1]))
+        return {
+            "cx": float(self._cx_spline(t_c)),
+            "cy": float(self._cy_spline(t_c)),
+        }
+
+    def to_dict(self) -> dict:
+        return {
+            "type": "RandomWalkPath",
+            "cx0": self.cx0,
+            "cy0": self.cy0,
+            "n_steps": self.n_steps,
+            "step_size": self.step_size,
+            "duration": self.duration,
+            "bound": self.bound,
+            "seed": self.seed,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RandomWalkPath":
+        return cls(
+            d["cx0"], d["cy0"], d["n_steps"], d["step_size"], d["duration"],
+            d.get("bound", 1.5), d.get("seed"),
+        )
+
+
 # ── ODE paths ─────────────────────────────────────────────────────────────────
 
 
@@ -708,6 +797,7 @@ PATH_REGISTRY: dict[str, type[Path]] = {
     "Oscillate": Oscillate,
     "AngularVelocity": AngularVelocity,
     "CircularOrbit": CircularOrbit,
+    "RandomWalkPath": RandomWalkPath,
     "HuePath": HuePath,
     "WaypointPath": WaypointPath,
     "LinearODEPath": LinearODEPath,

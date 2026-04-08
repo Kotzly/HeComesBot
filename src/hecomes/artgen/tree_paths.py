@@ -46,6 +46,7 @@ from hecomes.artgen.paths import (
     ODEPath,
     Oscillate,
     Path,
+    RandomWalkPath,
     path_from_dict,
 )
 from hecomes.artgen.tree import Node, get_random_function, linearize
@@ -57,6 +58,7 @@ _DEFAULT_PATHS_CONFIG: dict = {
     "animation_probability": 0.5,
     "path_weights": {
         "CircularOrbit": 3.0,
+        "RandomWalkPath": 1.5,
         "Oscillate": 2.0,
         "AngularVelocity": 2.0,
         "HuePath": 1.5,
@@ -155,20 +157,31 @@ def sample_paths_for_leaf(
     paths: list[Path] = []
     used: set[str] = set()
 
-    # ── Position: CircularOrbit for (cx, cy) ──────────────────────────────────
+    # ── Position: CircularOrbit or RandomWalkPath for (cx, cy) ───────────────
     has_cx = "cx" in float_params
     has_cy = "cy" in float_params
     w_orbit = pw.get("CircularOrbit", 0.0)
-    if has_cx and has_cy and w_orbit > 0 and _animate():
+    w_rwalk = pw.get("RandomWalkPath", 0.0)
+    if has_cx and has_cy and (w_orbit + w_rwalk) > 0 and _animate():
         w_osc = pw.get("Oscillate", 0.0) + pw.get("LinearDrift", 0.0)
-        total = w_orbit + w_osc
-        if total > 0 and np.random.rand() < w_orbit / total:
+        total = w_orbit + w_rwalk + w_osc
+        r = np.random.rand() * total
+        if r < w_orbit:
             paths.append(CircularOrbit(
                 cx0=float(params.get("cx", 0.0)),
                 cy0=float(params.get("cy", 0.0)),
                 r=_amp() * 0.5,
                 omega=_omega(),
                 phase=_phase(),
+            ))
+            used |= {"cx", "cy"}
+        elif r < w_orbit + w_rwalk:
+            paths.append(RandomWalkPath(
+                cx0=float(params.get("cx", 0.0)),
+                cy0=float(params.get("cy", 0.0)),
+                n_steps=max(3, int(duration)),
+                step_size=_amp() * 2.0,
+                duration=duration,
             ))
             used |= {"cx", "cy"}
 

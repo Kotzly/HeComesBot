@@ -8,15 +8,16 @@
         "sphere": 0.2
     },
     "1": {
-        "cos": 1,
-        "sin": 1,
+        "cos": 0.5,
+        "sin": 0.5,
         "blur": 0,
         "sharpen": 0,
         "sigmoid": 0,
         "mirrored_sigmoid": 0,
         "absolute_value": 0,
         "color_rotate": 0,
-        "kaleidoscope": 0
+        "kaleidoscope": 0,
+        "swirl": 1
     },
     "2": {
         "add": 1,
