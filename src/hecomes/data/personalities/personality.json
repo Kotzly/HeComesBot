@@ -38,7 +38,8 @@
         "circular_mean": 0,
         "circular_mean_far": 0,
         "hue_diff": 0,
-        "hue_rotate": 0
+        "hue_rotate": 0,
+        "hsv_warp": 1
     }
 }
 

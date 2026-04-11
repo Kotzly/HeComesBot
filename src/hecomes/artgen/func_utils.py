@@ -29,6 +29,26 @@ def is_valid_shape(image):
     return dy >= 3 and dx >= 3 and channels == 3
 
 
+def rgb_to_hsv(rgb):
+    """Convert (..., 3) RGB array in [0, 1] to HSV."""
+    r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+    cmax = np.maximum(np.maximum(r, g), b)
+    cmin = np.minimum(np.minimum(r, g), b)
+    delta = cmax - cmin
+    # Hue
+    h = np.zeros_like(cmax)
+    mask_r = (cmax == r) & (delta > 0)
+    mask_g = (cmax == g) & (delta > 0)
+    mask_b = (cmax == b) & (delta > 0)
+    h[mask_r] = ((g[mask_r] - b[mask_r]) / delta[mask_r]) % 6.0
+    h[mask_g] = (b[mask_g] - r[mask_g]) / delta[mask_g] + 2.0
+    h[mask_b] = (r[mask_b] - g[mask_b]) / delta[mask_b] + 4.0
+    h = h / 6.0
+    # Saturation
+    s = np.where(cmax > 0, delta / cmax, 0.0)
+    return np.stack([h, s, cmax], axis=-1).astype(np.float32)
+
+
 def hsv_to_rgb(hsv):
     """Convert (..., 3) HSV array in [0, 1] to RGB."""
     h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]

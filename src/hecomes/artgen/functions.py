@@ -9,6 +9,7 @@ from hecomes.artgen.primitives import (
     _gen_cone,
     _gen_gradient,
     _gen_kaleidoscope,
+    _gen_hsv_warp,
     _gen_pinch,
     _gen_polar_warp,
     _gen_rand_color,
@@ -28,6 +29,7 @@ from hecomes.artgen.primitives import (
     kaleidoscope,
     mirrored_sigmoid,
     blend,
+    hsv_warp,
     pinch,
     polar_warp,
     rand_color,
@@ -295,6 +297,14 @@ FUNCTION_REGISTRY = [
     FunctionDef(circular_mean_far, 2),
     FunctionDef(hue_diff, 2),
     FunctionDef(hue_rotate, 2),
+    FunctionDef(
+        hsv_warp,
+        2,
+        params=[
+            {"name": "amplitude", "type": "float", "min": 0.0, "max": 1.0, "label": "Amplitude"},
+        ],
+        generate=_gen_hsv_warp,
+    ),
     # ── Ternary (arity 3) ─────────────────────────────────────────────────────
     FunctionDef(blend, 3),
     FunctionDef(rgb_compose, 3),

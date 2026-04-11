@@ -18,6 +18,7 @@ from hecomes.artgen.func_utils import (
     linear_mesh,
     random_point,
     random_radius,
+    rgb_to_hsv,
 )
 
 # ── Leaf functions (arity 0) ──────────────────────────────────────────────────
@@ -492,6 +493,43 @@ def warp_by(img, dx_field, dy_field, amplitude=0.3):
 
 
 def _gen_warp_by():
+    return {"amplitude": float(np.random.uniform(0.1, 0.5))}
+
+
+# ── Binary warp: hsv_warp ─────────────────────────────────────────────────────
+
+
+def _hsv_warp_frame(image, field_frame, amplitude):
+    dy, dx, _ = image.shape
+    xs, ys = linear_mesh(dx=dx, dy=dy)
+    hsv = rgb_to_hsv(np.clip(field_frame, 0.0, 1.0))
+    h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    angle = h * (2.0 * np.pi)
+    dist = s * v * amplitude
+    x_src = xs + dist * np.cos(angle)
+    y_src = ys + dist * np.sin(angle)
+    col_src = (x_src + 1) / 2 * (dx - 1)
+    row_src = (y_src + 1) / 2 * (dy - 1)
+    return np.stack(
+        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
+         for c in range(3)],
+        axis=-1,
+    ).astype(np.float32)
+
+
+def hsv_warp(img, field, amplitude=0.3):
+    if cp is not None:
+        if isinstance(img, cp.ndarray):
+            img = cp.asnumpy(img)
+        if isinstance(field, cp.ndarray):
+            field = cp.asnumpy(field)
+    return np.stack(
+        [_hsv_warp_frame(img[k], field[k], amplitude) for k in range(img.shape[0])],
+        axis=0,
+    )
+
+
+def _gen_hsv_warp():
     return {"amplitude": float(np.random.uniform(0.1, 0.5))}
 
 
