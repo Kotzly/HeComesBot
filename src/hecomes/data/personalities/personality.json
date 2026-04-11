@@ -1,26 +1,26 @@
 {
     "0": {
-        "rand_color": 0,
-        "x_var": 0,
-        "y_var": 0,
-        "circle": 0,
-        "cone": 0,
-        "sphere": 0
+        "rand_color": 0.5,
+        "x_var": 1,
+        "y_var": 1,
+        "circle": 0.35,
+        "cone": 0.5,
+        "sphere": 0.15
     },
     "1": {
-        "sin": 0,
-        "cos": 0,
-        "absolute_value": 0,
-        "blur": 0,
+        "sin": 1,
+        "cos": 1,
+        "absolute_value": 0.1,
+        "blur": 0.5,
         "color_rotate": 0,
         "kaleidoscope": 0,
         "mirrored_sigmoid": 0,
-        "pinch": 0,
+        "pinch": 0.05,
         "polar_warp": 0,
-        "ripple": 0,
-        "sharpen": 0,
+        "ripple": 0.1,
+        "sharpen": 0.25,
         "sigmoid": 0,
-        "swirl": 0
+        "swirl": 0.15
     },
     "2": {
         "add": 0,

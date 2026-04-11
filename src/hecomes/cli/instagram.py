@@ -25,6 +25,7 @@ import optparse
 import os
 import subprocess
 import tempfile
+import time
 
 import numpy as np
 from numpy.random import rand
@@ -234,12 +235,12 @@ def _parse_args():
                       help="Path to credentials JSON. Default: ~/.hecomes_instagram.json.")
     parser.add_option("-S", "--seed", dest="seed", type=int, default=None,
                       help="Random seed. Default: random.")
-    parser.add_option("-W", "--width", dest="width", type=int, default=512,
+    parser.add_option("-W", "--width", dest="width", type=int, default=1080,
                       help="Width in pixels. Default: 512.")
-    parser.add_option("-H", "--height", dest="height", type=int, default=512,
+    parser.add_option("-H", "--height", dest="height", type=int, default=1920,
                       help="Height in pixels. Default: 512.")
     parser.add_option("--min-depth", dest="min_depth", type=int, default=6)
-    parser.add_option("--max-depth", dest="max_depth", type=int, default=12)
+    parser.add_option("--max-depth", dest="max_depth", type=int, default=8)
     parser.add_option("--personality", dest="personality", type=str, default=None)
     parser.add_option("--path-personality", dest="path_personality", type=str, default=None)
     parser.add_option("-f", "--fps", dest="fps", type=int, default=30)
@@ -256,33 +257,46 @@ def _parse_args():
                       action="store_true", default=False)
     parser.add_option("--ode-solver", dest="ode_solver", type=str, default="rk4")
     parser.add_option("--gpu", dest="gpu", action="store_true", default=False)
+    parser.add_option(
+        "--every", dest="every", type=str, default=None,
+        help=(
+            "Repeat the post every interval. "
+            "Format: <N><unit> where unit is s (seconds), m (minutes), or h (hours). "
+            "Example: --every 30m, --every 2h, --every 90s. "
+            "Without --seed, each run uses a fresh random seed."
+        ),
+    )
     args, _ = parser.parse_args()
     return args
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+def _parse_interval(value):
+    """Parse an interval string like '30m', '2h', '90s' into seconds."""
+    units = {"s": 1, "m": 60, "h": 3600}
+    if not value:
+        return None
+    unit = value[-1].lower()
+    if unit not in units:
+        raise ValueError(
+            f"--every unit must be s, m, or h (got '{value}'). "
+            "Example: --every 30m"
+        )
+    try:
+        n = float(value[:-1])
+    except ValueError:
+        raise ValueError(f"--every value is not a number: '{value[:-1]}'")
+    return n * units[unit]
 
 
-def main():
-    args = _parse_args()
+# ── Single-run helper ─────────────────────────────────────────────────────────
 
-    if args.post_type not in VALID_TYPES:
-        raise ValueError(f"--type must be one of {VALID_TYPES}, got '{args.post_type}'")
 
-    ffmpeg_bin = os.getenv("FFMPEG_BIN")
-    if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
-
-    creds = load_credentials(args.credentials)
-    poster = InstagramPoster(**creds)
-
-    # ── URL mode: skip generation entirely ───────────────────────────────────
+def _post_once(args, poster, seed):
+    """Generate and post once. seed is the resolved seed for this run."""
     if args.url:
         _post_url(poster, args.post_type, args.url, args.caption)
         return
 
-    # ── Generation mode ───────────────────────────────────────────────────────
-    seed = args.seed if args.seed is not None else int(rand() * 1e9)
     print(f"Seed: {seed}")
 
     if args.post_type == "image":
@@ -356,6 +370,44 @@ def main():
             poster.post_story_image(tmp_path)
         finally:
             os.unlink(tmp_path)
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+
+def main():
+    args = _parse_args()
+
+    if args.post_type not in VALID_TYPES:
+        raise ValueError(f"--type must be one of {VALID_TYPES}, got '{args.post_type}'")
+
+    ffmpeg_bin = os.getenv("FFMPEG_BIN")
+    if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
+
+    interval = _parse_interval(args.every)
+
+    creds = load_credentials(args.credentials)
+    poster = InstagramPoster(**creds)
+
+    fixed_seed = args.seed  # None means "new seed each run"
+    run = 0
+    while True:
+        run += 1
+        seed = fixed_seed if fixed_seed is not None else int(rand() * 1e9)
+        if interval:
+            print(f"[run {run}] Starting post at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        try:
+            _post_once(args, poster, seed)
+        except Exception as exc:
+            if interval:
+                print(f"[run {run}] ERROR: {exc} — will retry next interval.")
+            else:
+                raise
+        if not interval:
+            break
+        print(f"[run {run}] Done. Next run in {args.every}.")
+        time.sleep(interval)
 
 
 if __name__ == "__main__":
