@@ -190,6 +190,79 @@ class LorenzPath(GeneralODEPath):
 PATH_REGISTRY["LorenzPath"] = LorenzPath
 ```
 
+### Instagram bot
+
+Post generated images, Reels, and Stories to Instagram. Requires a Meta developer app with `instagram_content_publish` permission, a Business or Creator account, and a free [Cloudinary](https://cloudinary.com) account for hosting media.
+
+**Install dependencies:**
+```bash
+pip install -e ".[instagram]"
+```
+
+**Set up credentials** in `~/.hecomes_instagram.json`:
+```json
+{
+  "ig_user_id":        "YOUR_NUMERIC_IG_USER_ID",
+  "access_token":      "YOUR_LONG_LIVED_ACCESS_TOKEN",
+  "cloudinary_cloud":  "YOUR_CLOUD_NAME",
+  "cloudinary_key":    "YOUR_API_KEY",
+  "cloudinary_secret": "YOUR_API_SECRET"
+}
+```
+Alternatively set `HECOMES_IG_USER_ID`, `HECOMES_IG_ACCESS_TOKEN`, `HECOMES_CLOUDINARY_CLOUD`, `HECOMES_CLOUDINARY_KEY`, `HECOMES_CLOUDINARY_SECRET` as environment variables.
+
+**One-time token setup:**
+1. Convert Instagram account to Business or Creator (free, in Instagram settings)
+2. Create a Meta app at [developers.facebook.com](https://developers.facebook.com) → add Instagram Graph API product
+3. Generate a short-lived token with permissions: `instagram_basic`, `instagram_content_publish`, `pages_read_engagement`
+4. Exchange for a long-lived token (60-day expiry):
+   ```
+   GET https://graph.facebook.com/v21.0/oauth/access_token
+     ?grant_type=fb_exchange_token&client_id=APP_ID&client_secret=APP_SECRET&fb_exchange_token=SHORT_TOKEN
+   ```
+5. Get your numeric user ID: `GET https://graph.instagram.com/v21.0/me?fields=id&access_token=TOKEN`
+
+```bash
+hecomes-instagram [options]
+```
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--type` | Post type: `image`, `reel`, `story-image`, `story-video` | `image` |
+| `--url` | Post an existing public URL instead of generating art | — |
+| `--caption` | Post caption (ignored for stories) | empty |
+| `--credentials` | Path to credentials JSON | `~/.hecomes_instagram.json` |
+| `-S`, `--seed` | Random seed | random |
+| `-W`, `--width` | Width in pixels | 512 |
+| `-H`, `--height` | Height in pixels | 512 |
+| `--personality` | Personality JSON name | `personality` |
+| `--path-personality` | Personality JSON with `"paths"` section | same as `--personality` |
+| `-d`, `--duration` | `[reel/story-video]` Duration in seconds | 15 |
+| `-f`, `--fps` | `[reel/story-video]` Frames per second | 30 |
+| `-s`, `--step` | `[reel/story-video]` Path time multiplier | 0.1 |
+| `-e`, `--extension` | `[reel/story-video]` Video format | `mp4` |
+| `-b`, `--bitrate` | `[reel/story-video]` Constant bitrate | `6M` |
+| `-p`, `--processes` | `[reel/story-video]` Parallel workers | 3 |
+
+**Aspect ratio requirements:**
+- `image`: 4:5 to 1.91:1 (square 1:1 works); 512×512 is fine
+- `reel`: 9:16 required — use `-W 540 -H 960`
+- `story-image` / `story-video`: 9:16 recommended — use `-W 540 -H 960`
+
+**Examples:**
+```bash
+# Generate and post
+hecomes-instagram --type image --caption "Generated art"
+hecomes-instagram --type reel -W 540 -H 960 -d 15 --caption "Animation"
+hecomes-instagram --type story-image -W 540 -H 960
+hecomes-instagram --type story-video -W 540 -H 960 -d 30
+
+# Post an existing public URL (skips generation)
+hecomes-instagram --url https://example.com/photo.jpg --caption "My art"
+hecomes-instagram --url https://example.com/clip.mp4 --type reel
+hecomes-instagram --url https://example.com/story.jpg --type story-image
+```
+
 ### Bot (legacy)
 
 ```bash
