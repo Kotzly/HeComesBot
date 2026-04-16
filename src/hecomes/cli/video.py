@@ -1,31 +1,19 @@
-import multiprocessing as mp
 import optparse
 import os
-import subprocess
 
 import numpy as np
 from numpy.random import rand
 
 from hecomes.artgen.func_utils import hsv_to_rgb
 from hecomes.artgen.tree import build_node, compile_plan, eval_plan, linearize
+from hecomes.cli._video_utils import (
+    ALPHA_PIX_FMTS,
+    build_ffmpeg_cmd,
+    run_ffmpeg_pipeline,
+    select_codec,
+    setup_ffmpeg_path,
+)
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
-
-RECOMMENDED_CODECS = {
-    "mp4": "libopenh264",
-    "avi": "mpeg4",
-    "webm": "libvpx-vp9",
-    "mkv": "libopenh264",
-    "ogg": "libtheora",
-    "flv": "flv",
-    "mpeg": "mpeg2video",
-    "gif": "gif",
-}
-
-# Output pixel formats that preserve alpha, keyed by codec.
-ALPHA_PIX_FMTS = {
-    "libvpx-vp9": "yuva420p",
-    "gif": "pal8",
-}
 
 # _trees layout: list of (order, nodes, leaves) tuples
 # [color_tree(s)..., extra_tree(s)...]
@@ -129,10 +117,7 @@ def _parse_args():
 def main():
     global _trees, _color_space, _independent_channels, _n_color, _use_gpu
 
-    ffmpeg_bin = os.getenv("FFMPEG_BIN")
-    if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ["PATH"]:
-        os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
-
+    setup_ffmpeg_path()
     args = _parse_args()
 
     _use_gpu = args.gpu
@@ -149,12 +134,7 @@ def main():
     p = load_personality_list(PERSONALITIES_DIR / (personality + ".json"))
     p_h = load_personality_list(PERSONALITIES_DIR / "hsv.json")
 
-    recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
-    if args.codec is None:
-        args.codec = recommended
-    elif args.codec != recommended:
-        print(f"Warning: '{args.codec}' is not the recommended codec for .{args.ext}.")
-        print(f"  Recommended: '{recommended}'. The video may not play properly.")
+    args.codec = select_codec(args.ext, args.codec)
 
     os.makedirs("videos", exist_ok=True)
 
@@ -210,54 +190,22 @@ def main():
         _independent_channels = args.independent_channels
 
         output_path = f"videos/video-{i+start_i}.{args.ext}"
-        bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
-        openh264_args = (
-            ["-profile:v", "high", "-coder", "cabac", "-rc_mode", "bitrate"]
-            if args.codec == "libopenh264"
-            else []
-        )
+
+        alpha_pix_fmt = None
         if args.alpha:
             if args.codec in ALPHA_PIX_FMTS:
-                alpha_args = ["-pix_fmt", ALPHA_PIX_FMTS[args.codec]]
+                alpha_pix_fmt = ALPHA_PIX_FMTS[args.codec]
             else:
                 print(f"Warning: codec '{args.codec}' does not support alpha. Alpha channel will be dropped.")
-                alpha_args = []
-        else:
-            alpha_args = []
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pixel_format",
-            pixel_format,
-            "-video_size",
-            f"{args.width}x{args.height}",
-            "-framerate",
-            str(args.fps),
-            "-i",
-            "pipe:0",
-            "-vcodec",
-            args.codec,
-            *openh264_args,
-            *alpha_args,
-            *bitrate_args,
-            output_path,
-        ]
 
-        print("Running:\n\t{}".format(" ".join(ffmpeg_cmd)))
+        ffmpeg_cmd = build_ffmpeg_cmd(
+            args.width, args.height, args.fps, args.codec, output_path,
+            pixel_format=pixel_format, bitrate=args.bitrate, alpha_pix_fmt=alpha_pix_fmt,
+        )
+
         print(f"Encoding {n_frames} frames to {output_path}")
         try:
-            with mp.Pool(args.n_process) as pool:
-                with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
-                    try:
-                        for frames in pool.imap(_compute_chunk, chunk_steps):
-                            proc.stdin.write(frames.tobytes())
-                    except KeyboardInterrupt:
-                        print("\nInterrupted — closing FFmpeg pipe...")
-                        pool.terminate()
-                        proc.stdin.close()
-                        proc.wait()
+            run_ffmpeg_pipeline(ffmpeg_cmd, args.n_process, chunk_steps, _compute_chunk)
         except KeyboardInterrupt:
             pass
         print(f"Done: {output_path}")

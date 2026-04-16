@@ -12,96 +12,24 @@ Key differences from ``hecomes-video``:
 * Extra CLI options: ``--path-personality``, ``--ode-solver``, ``--no-paths``.
 """
 
-import multiprocessing as mp
 import optparse
 import os
-import subprocess
 
 import numpy as np
 from numpy.random import rand
 
-from hecomes.artgen.func_utils import hsv_to_rgb
-from hecomes.artgen.tree import linearize
-from hecomes.artgen.tree_paths import (
-    build_node_paths,
-    compile_plan_paths,
-    eval_plan_paths,
-    integrate_ode_paths,
-    load_paths_config,
+from hecomes.artgen.tree_paths import integrate_ode_paths, load_paths_config
+from hecomes.cli._video_utils import (
+    ALPHA_PIX_FMTS,
+    build_ffmpeg_cmd,
+    build_path_plan,
+    compute_chunk_paths,
+    init_worker,
+    run_ffmpeg_pipeline,
+    select_codec,
+    setup_ffmpeg_path,
 )
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
-
-RECOMMENDED_CODECS = {
-    "mp4": "libopenh264",
-    "avi": "mpeg4",
-    "webm": "libvpx-vp9",
-    "mkv": "libopenh264",
-    "ogg": "libtheora",
-    "flv": "flv",
-    "mpeg": "mpeg2video",
-    "gif": "gif",
-}
-
-ALPHA_PIX_FMTS = {
-    "libvpx-vp9": "yuva420p",
-    "gif": "pal8",
-}
-
-# ── Process-level globals (shared across pool workers via fork) ───────────────
-# Same structure as video.py globals; _plans replaces _trees.
-
-_plans = None           # list of compiled path plans (one per color/extra tree)
-_color_space = "rgb"
-_independent_channels = False
-_n_color = 1
-_use_gpu = False
-
-
-# ── Internal helpers ──────────────────────────────────────────────────────────
-
-
-def _build(min_depth, max_depth, dx, dy, weights, seed, paths_config, duration, alpha):
-    np.random.seed(seed % (2**32 - 1))
-    nodes, paths_per_leaf, params_per_leaf = {}, {}, {}
-    root_id = build_node_paths(
-        0, min_depth, max_depth, dx, dy, weights,
-        nodes, paths_per_leaf, params_per_leaf, paths_config, duration,
-    )
-    order = linearize(root_id, nodes)
-    return compile_plan_paths(order, nodes, paths_per_leaf, params_per_leaf, dx, dy)
-
-
-def _compute_chunk(steps):
-    if _independent_channels:
-        channels = [
-            eval_plan_paths(_plans[i], steps, use_gpu=_use_gpu)[..., i : i + 1]
-            for i in range(3)
-        ]
-        raw = np.concatenate(channels, axis=-1)
-    else:
-        raw = eval_plan_paths(_plans[0], steps, use_gpu=_use_gpu)
-
-    extra = [
-        eval_plan_paths(_plans[i], steps, use_gpu=_use_gpu)[..., 0:1].clip(0, 1)
-        for i in range(_n_color, len(_plans))
-    ]
-
-    if _color_space == "hsv":
-        hsv = np.stack(
-            [raw[..., 0] % 1.0, raw[..., 1].clip(0, 1), raw[..., 2].clip(0, 1)],
-            axis=-1,
-        )
-        frames = hsv_to_rgb(hsv)
-    elif _color_space == "cmy":
-        k = extra.pop(0) if extra else 0.0
-        frames = (1.0 - raw.clip(0, 1)) * (1.0 - k)
-    else:
-        frames = raw.clip(0, 1)
-
-    if extra:
-        frames = np.concatenate([frames, extra[0]], axis=-1)
-
-    return np.rint(frames * 255.0).astype(np.uint8)
 
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
@@ -171,16 +99,10 @@ def _parse_args():
 
 
 def main():
-    global _plans, _color_space, _independent_channels, _n_color, _use_gpu
-
-    ffmpeg_bin = os.getenv("FFMPEG_BIN")
-    if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ["PATH"]:
-        os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
-
+    setup_ffmpeg_path()
     args = _parse_args()
 
-    _use_gpu = args.gpu
-    if _use_gpu and args.n_process > 1:
+    if args.gpu and args.n_process > 1:
         print("Warning: --gpu with multiple workers splits VRAM across processes. Consider --processes 1.")
 
     if args.color_space not in ("rgb", "hsv", "cmy"):
@@ -202,12 +124,7 @@ def main():
     if args.no_paths:
         paths_config = dict(paths_config, animation_probability=0.0)
 
-    recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
-    if args.codec is None:
-        args.codec = recommended
-    elif args.codec != recommended:
-        print(f"Warning: '{args.codec}' is not the recommended codec for .{args.ext}.")
-        print(f"  Recommended: '{recommended}'. The video may not play properly.")
+    args.codec = select_codec(args.ext, args.codec)
 
     os.makedirs("videos", exist_ok=True)
 
@@ -245,75 +162,50 @@ def main():
         if args.color_space == "hsv" and args.independent_channels:
             print(f"Building H/S/V path trees for video {i+1}/{n_videos} (seed={video_n})")
             color_plans = [
-                _build(weights=p_h, seed=video_n,          **build_kwargs),
-                _build(weights=p,   seed=video_n ^ 0xABCD, **build_kwargs),
-                _build(weights=p,   seed=video_n ^ 0x1234, **build_kwargs),
+                build_path_plan(weights=p_h, seed=video_n,          **build_kwargs),
+                build_path_plan(weights=p,   seed=video_n ^ 0xABCD, **build_kwargs),
+                build_path_plan(weights=p,   seed=video_n ^ 0x1234, **build_kwargs),
             ]
-            _n_color = 3
+            n_color = 3
         else:
             print(f"Building path tree for video {i+1}/{n_videos} (seed={video_n})")
-            color_plans = [_build(weights=p, seed=video_n, **build_kwargs)]
-            _n_color = 1
+            color_plans = [build_path_plan(weights=p, seed=video_n, **build_kwargs)]
+            n_color = 1
 
         extra_plans = []
         if args.k:
-            extra_plans.append(_build(weights=p, seed=video_n ^ 0x5678, **build_kwargs))
+            extra_plans.append(build_path_plan(weights=p, seed=video_n ^ 0x5678, **build_kwargs))
         if args.alpha:
-            extra_plans.append(_build(weights=p, seed=video_n ^ 0x9ABC, **build_kwargs))
+            extra_plans.append(build_path_plan(weights=p, seed=video_n ^ 0x9ABC, **build_kwargs))
 
-        _plans = color_plans + extra_plans
-        _color_space = args.color_space
-        _independent_channels = args.independent_channels
+        plans = color_plans + extra_plans
 
         # Pre-integrate any ODE paths sequentially before distributing chunks
         print("Integrating ODE paths...")
-        for plan in _plans:
+        for plan in plans:
             integrate_ode_paths(plan, n_frames, args.fps, solver=args.ode_solver)
 
         output_path = f"videos/video-{i+start_i}.{args.ext}"
-        bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
-        openh264_args = (
-            ["-profile:v", "high", "-coder", "cabac", "-rc_mode", "bitrate"]
-            if args.codec == "libopenh264"
-            else []
-        )
+
+        alpha_pix_fmt = None
         if args.alpha:
             if args.codec in ALPHA_PIX_FMTS:
-                alpha_args = ["-pix_fmt", ALPHA_PIX_FMTS[args.codec]]
+                alpha_pix_fmt = ALPHA_PIX_FMTS[args.codec]
             else:
                 print(f"Warning: codec '{args.codec}' does not support alpha. Alpha channel will be dropped.")
-                alpha_args = []
-        else:
-            alpha_args = []
 
-        ffmpeg_cmd = [
-            "ffmpeg", "-y",
-            "-f", "rawvideo",
-            "-pixel_format", pixel_format,
-            "-video_size", f"{args.width}x{args.height}",
-            "-framerate", str(args.fps),
-            "-i", "pipe:0",
-            "-vcodec", args.codec,
-            *openh264_args,
-            *alpha_args,
-            *bitrate_args,
-            output_path,
-        ]
+        ffmpeg_cmd = build_ffmpeg_cmd(
+            args.width, args.height, args.fps, args.codec, output_path,
+            pixel_format=pixel_format, bitrate=args.bitrate, alpha_pix_fmt=alpha_pix_fmt,
+        )
 
-        print("Running:\n\t{}".format(" ".join(ffmpeg_cmd)))
         print(f"Encoding {n_frames} frames to {output_path}")
         try:
-            with mp.Pool(args.n_process) as pool:
-                with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
-                    try:
-                        for frames in pool.imap(_compute_chunk, chunk_steps):
-                            proc.stdin.write(frames.tobytes())
-                    except KeyboardInterrupt:
-                        print("\nInterrupted — closing FFmpeg pipe...")
-                        pool.terminate()
-                        proc.stdin.close()
-                        proc.wait()
-                        raise
+            run_ffmpeg_pipeline(
+                ffmpeg_cmd, args.n_process, chunk_steps, compute_chunk_paths,
+                pool_initializer=init_worker,
+                pool_initargs=(plans, args.color_space, args.independent_channels, n_color, args.gpu),
+            )
         except KeyboardInterrupt:
             break
         print(f"Done: {output_path}")

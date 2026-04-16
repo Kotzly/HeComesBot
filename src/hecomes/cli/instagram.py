@@ -20,11 +20,9 @@ Example usage::
     hecomes-instagram --url https://example.com/story.jpg --type story-image
 """
 
-import multiprocessing as mp
 import optparse
 import os
 import queue
-import subprocess
 import tempfile
 import threading
 import time
@@ -32,90 +30,26 @@ import time
 import numpy as np
 from numpy.random import rand
 
-from hecomes.artgen.func_utils import hsv_to_rgb
-from hecomes.artgen.tree import linearize
-from hecomes.artgen.tree_paths import (
-    build_node_paths,
-    compile_plan_paths,
-    eval_plan_paths,
-    integrate_ode_paths,
-    load_paths_config,
+from hecomes.artgen.tree_paths import integrate_ode_paths, load_paths_config
+from hecomes.cli._video_utils import (
+    build_ffmpeg_cmd,
+    build_path_plan,
+    compute_chunk_paths,
+    init_worker,
+    run_ffmpeg_pipeline,
+    select_codec,
+    setup_ffmpeg_path,
 )
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
 from hecomes.instagram.poster import InstagramPoster, load_credentials
 
-RECOMMENDED_CODECS = {
-    "mp4": "libopenh264",
-    "avi": "mpeg4",
-    "webm": "libvpx-vp9",
-    "mkv": "libopenh264",
-    "ogg": "libtheora",
-    "flv": "flv",
-    "mpeg": "mpeg2video",
-    "gif": "gif",
-}
-
 VALID_TYPES = ("image", "reel", "story-image", "story-video")
-
-# ── Process-level globals (shared across pool workers via fork) ───────────────
-
-_plans = None
-_color_space = "rgb"
-_independent_channels = False
-_n_color = 1
-_use_gpu = False
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _build(min_depth, max_depth, dx, dy, weights, seed, paths_config, duration, alpha):
-    np.random.seed(seed % (2**32 - 1))
-    nodes, paths_per_leaf, params_per_leaf = {}, {}, {}
-    root_id = build_node_paths(
-        0, min_depth, max_depth, dx, dy, weights,
-        nodes, paths_per_leaf, params_per_leaf, paths_config, duration,
-    )
-    order = linearize(root_id, nodes)
-    return compile_plan_paths(order, nodes, paths_per_leaf, params_per_leaf, dx, dy)
-
-
-def _compute_chunk(steps):
-    if _independent_channels:
-        channels = [
-            eval_plan_paths(_plans[i], steps, use_gpu=_use_gpu)[..., i : i + 1]
-            for i in range(3)
-        ]
-        raw = np.concatenate(channels, axis=-1)
-    else:
-        raw = eval_plan_paths(_plans[0], steps, use_gpu=_use_gpu)
-
-    extra = [
-        eval_plan_paths(_plans[i], steps, use_gpu=_use_gpu)[..., 0:1].clip(0, 1)
-        for i in range(_n_color, len(_plans))
-    ]
-
-    if _color_space == "hsv":
-        hsv = np.stack(
-            [raw[..., 0] % 1.0, raw[..., 1].clip(0, 1), raw[..., 2].clip(0, 1)],
-            axis=-1,
-        )
-        frames = hsv_to_rgb(hsv)
-    elif _color_space == "cmy":
-        k = extra.pop(0) if extra else 0.0
-        frames = (1.0 - raw.clip(0, 1)) * (1.0 - k)
-    else:
-        frames = raw.clip(0, 1)
-
-    if extra:
-        frames = np.concatenate([frames, extra[0]], axis=-1)
-
-    return np.rint(frames * 255.0).astype(np.uint8)
-
-
-def _generate_video(args, plans, output_path):
-    global _plans, _color_space, _independent_channels, _n_color, _use_gpu
-
+def _generate_video(args, plans, n_color, output_path):
     n_frames = args.fps * args.duration
     all_steps = (
         np.arange(n_frames) * args.step / args.fps
@@ -125,49 +59,22 @@ def _generate_video(args, plans, output_path):
         for s in range(0, n_frames, args.chunk_size)
     ]
 
-    _plans = plans
-    _color_space = args.color_space
-    _independent_channels = args.independent_channels
-    _use_gpu = args.gpu
-
     print("Integrating ODE paths...")
-    for plan in _plans:
+    for plan in plans:
         integrate_ode_paths(plan, n_frames, args.fps, solver=args.ode_solver)
 
-    recommended = RECOMMENDED_CODECS.get(args.ext, "libopenh264")
-    codec = args.codec or recommended
-    openh264_args = (
-        ["-profile:v", "high", "-coder", "cabac", "-rc_mode", "bitrate"]
-        if codec == "libopenh264"
-        else []
+    codec = select_codec(args.ext, args.codec)
+    ffmpeg_cmd = build_ffmpeg_cmd(
+        args.width, args.height, args.fps, codec, output_path,
+        bitrate=args.bitrate,
     )
-    bitrate_args = ["-b:v", args.bitrate] if args.bitrate else []
 
-    ffmpeg_cmd = [
-        "ffmpeg", "-y",
-        "-f", "rawvideo",
-        "-pixel_format", "rgb24",
-        "-video_size", f"{args.width}x{args.height}",
-        "-framerate", str(args.fps),
-        "-i", "pipe:0",
-        "-vcodec", codec,
-        *openh264_args,
-        *bitrate_args,
-        output_path,
-    ]
-
-    print("Running:\n\t{}".format(" ".join(ffmpeg_cmd)))
     print(f"Encoding {n_frames} frames to {output_path}")
-    with mp.Pool(args.n_process) as pool:
-        with subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE) as proc:
-            try:
-                for frames in pool.imap(_compute_chunk, chunk_steps):
-                    proc.stdin.write(frames.tobytes())
-            except KeyboardInterrupt:
-                pool.terminate()
-                proc.stdin.close()
-                proc.wait()
-                raise
+    run_ffmpeg_pipeline(
+        ffmpeg_cmd, args.n_process, chunk_steps, compute_chunk_paths,
+        pool_initializer=init_worker,
+        pool_initargs=(plans, args.color_space, args.independent_channels, n_color, args.gpu),
+    )
 
 
 def _generate_image(args, seed, output_path):
@@ -180,6 +87,13 @@ def _generate_image(args, seed, output_path):
         or str(PERSONALITIES_DIR / (personality + ".json"))
     )
     paths_config = load_paths_config(path_personality_file)
+
+    from hecomes.artgen.tree import linearize
+    from hecomes.artgen.tree_paths import (
+        build_node_paths,
+        compile_plan_paths,
+        eval_plan_paths,
+    )
 
     np.random.seed(seed % (2**32 - 1))
     nodes, paths_per_leaf, params_per_leaf = {}, {}, {}
@@ -202,37 +116,27 @@ def _generate_image(args, seed, output_path):
 # ── Post from URL (no generation) ────────────────────────────────────────────
 
 
+def _publish_url(poster, label, **container_kwargs):
+    """Create a container, wait for it, publish it, and print a confirmation."""
+    cid = poster._create_container(**container_kwargs)
+    poster._wait(cid)
+    result = poster._publish(cid)
+    print(f"Posted {label} — media ID: {result.get('id')}")
+
+
 def _post_url(poster, post_type, url, caption, also_story=False):
     if post_type == "image":
-        cid = poster._create_container(image_url=url, caption=caption)
-        poster._wait(cid)
-        result = poster._publish(cid)
-        print(f"Posted image — media ID: {result.get('id')}")
+        _publish_url(poster, "image", image_url=url, caption=caption)
         if also_story:
-            cid = poster._create_container(image_url=url, media_type="STORIES")
-            poster._wait(cid)
-            result = poster._publish(cid)
-            print(f"Posted story — media ID: {result.get('id')}")
+            _publish_url(poster, "story", image_url=url, media_type="STORIES")
     elif post_type == "reel":
-        cid = poster._create_container(video_url=url, caption=caption, media_type="REELS")
-        poster._wait(cid)
-        result = poster._publish(cid)
-        print(f"Posted reel — media ID: {result.get('id')}")
+        _publish_url(poster, "reel", video_url=url, caption=caption, media_type="REELS")
         if also_story:
-            cid = poster._create_container(video_url=url, media_type="STORIES")
-            poster._wait(cid)
-            result = poster._publish(cid)
-            print(f"Posted story — media ID: {result.get('id')}")
+            _publish_url(poster, "story", video_url=url, media_type="STORIES")
     elif post_type == "story-image":
-        cid = poster._create_container(image_url=url, media_type="STORIES")
-        poster._wait(cid)
-        result = poster._publish(cid)
-        print(f"Posted story — media ID: {result.get('id')}")
+        _publish_url(poster, "story", image_url=url, media_type="STORIES")
     else:  # story-video
-        cid = poster._create_container(video_url=url, media_type="STORIES")
-        poster._wait(cid)
-        result = poster._publish(cid)
-        print(f"Posted story — media ID: {result.get('id')}")
+        _publish_url(poster, "story", video_url=url, media_type="STORIES")
 
 
 # ── Generation / posting split ────────────────────────────────────────────────
@@ -284,13 +188,15 @@ def _generate_to_file(args, seed):
             print(f"[generator] Building path tree (seed={seed})")
             if args.color_space == "hsv" and args.independent_channels:
                 color_plans = [
-                    _build(weights=p_h, seed=seed,          **build_kwargs),
-                    _build(weights=p,   seed=seed ^ 0xABCD, **build_kwargs),
-                    _build(weights=p,   seed=seed ^ 0x1234, **build_kwargs),
+                    build_path_plan(weights=p_h, seed=seed,          **build_kwargs),
+                    build_path_plan(weights=p,   seed=seed ^ 0xABCD, **build_kwargs),
+                    build_path_plan(weights=p,   seed=seed ^ 0x1234, **build_kwargs),
                 ]
+                n_color = 3
             else:
-                color_plans = [_build(weights=p, seed=seed, **build_kwargs)]
-            _generate_video(args, color_plans, tmp_path)
+                color_plans = [build_path_plan(weights=p, seed=seed, **build_kwargs)]
+                n_color = 1
+            _generate_video(args, color_plans, n_color, tmp_path)
         else:
             _generate_image(args, seed, tmp_path)
     except Exception:
@@ -413,9 +319,9 @@ def _parse_args():
     parser.add_option("-S", "--seed", dest="seed", type=int, default=None,
                       help="Random seed. Default: random.")
     parser.add_option("-W", "--width", dest="width", type=int, default=1080,
-                      help="Width in pixels. Default: 512.")
+                      help="Width in pixels. Default: 1080.")
     parser.add_option("-H", "--height", dest="height", type=int, default=1920,
-                      help="Height in pixels. Default: 512.")
+                      help="Height in pixels. Default: 1920.")
     parser.add_option("--min-depth", dest="min_depth", type=int, default=6)
     parser.add_option("--max-depth", dest="max_depth", type=int, default=8)
     parser.add_option("--personality", dest="personality", type=str, default=None)
@@ -488,9 +394,7 @@ def main():
     if args.post_type not in VALID_TYPES:
         raise ValueError(f"--type must be one of {VALID_TYPES}, got '{args.post_type}'")
 
-    ffmpeg_bin = os.getenv("FFMPEG_BIN")
-    if ffmpeg_bin and (ffmpeg_bin + os.pathsep) not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = (ffmpeg_bin + os.pathsep) + os.environ["PATH"]
+    setup_ffmpeg_path()
 
     interval = _parse_interval(args.every)
     creds = load_credentials(args.credentials)
