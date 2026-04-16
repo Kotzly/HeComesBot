@@ -26,6 +26,37 @@ pip install -e ".[bot]"
 
 For video generation, [FFmpeg](https://www.ffmpeg.org/) must be installed and accessible in PATH.
 
+### Docker
+
+A `Dockerfile` is included. It bundles all dependencies (including FFmpeg) and supports every CLI and the web UI.
+
+```bash
+docker build -t hecomes .
+```
+
+Run the web UI:
+```bash
+docker run -p 5000:5000 hecomes
+```
+
+Run a CLI by overriding the default command:
+```bash
+# Generate an image
+docker run hecomes hecomes-image --help
+
+# Generate a video (mount a local directory to retrieve the output)
+docker run -v ./output:/out hecomes hecomes-video -n 1 -d 5 /out/video.mp4
+
+# Post to Instagram (pass credentials as environment variables)
+docker run \
+  -e HECOMES_IG_USER_ID=... \
+  -e HECOMES_IG_ACCESS_TOKEN=... \
+  -e HECOMES_CLOUDINARY_CLOUD=... \
+  -e HECOMES_CLOUDINARY_KEY=... \
+  -e HECOMES_CLOUDINARY_SECRET=... \
+  hecomes hecomes-instagram --type image --caption "hello"
+```
+
 ---
 
 ## Usage
