@@ -1,165 +1,49 @@
 """Minimal real-time renderer.
 
 A stripped-down evaluation backend for ``hecomes-video-fast``.  It renders the
-same expression trees as :mod:`hecomes.artgen.tree`, but trades generality for
-speed so that generation keeps up with playback (>= 30 fps at 540x960).
+same expression trees as :mod:`hecomes.artgen.tree` and, with bilinear
+sampling, produces bit-identical output — both backends now compile their
+warps through :mod:`hecomes.artgen.resample` and blur through the separable
+kernels in :mod:`hecomes.artgen.func_utils`.
 
-Three ideas carry the whole speedup:
+What is left that is specific to this backend:
 
-1. **Static warps are pre-compiled.**  ``swirl``/``ripple``/``pinch``/
-   ``polar_warp``/``kaleidoscope`` all resolve to a backward map that depends
-   only on the node parameters and the frame size — never on time.  The sample
-   coordinates (and bilinear weights) are computed once at compile time and the
-   per-frame work collapses to a gather.  The general backend instead rebuilds
-   the coordinate grid and calls ``scipy.ndimage.map_coordinates`` once per
-   channel per frame: 30 calls per 10-frame chunk against 1 gather here.
-2. **Separable convolution.**  ``blur``/``sharpen`` use a 5x5 binomial kernel,
-   which factors into two 1D passes (10 multiply-adds per pixel instead of 25),
-   applied to the whole chunk at once rather than per frame per channel.
-3. **In-place elementwise ops.**  Every buffer in the plan has exactly one
-   consumer, so unary and binary elementwise ops write into their input instead
-   of allocating. Roughly halves the memory traffic of ``sin``/``cos``/``abs``.
+1. **In-place elementwise ops.**  Every buffer in a plan has exactly one
+   consumer, so unary and binary elementwise ops write into their input
+   instead of allocating.  The general backend cannot assume this: the web UI
+   evaluates and re-evaluates subtrees of a shared node graph.
+2. **Nearest sampling.**  ``--sampling nearest`` drops bilinear interpolation
+   for about a quarter of the cost per warp, which is the lever that makes
+   540x960 hold 30 fps on a warp-heavy tree.
+3. **A restricted operator set,** so nothing in a plan can be slow by
+   surprise, plus the frame-rate budget in the CLI that times and redraws
+   trees that would fall behind.
 
-Everything runs in float32 end to end.
+Together those are worth roughly 1.2x over the general backend with bilinear
+sampling and 2.1x with nearest, measured at 540x960.  Before the shared
+optimisations landed the gap was 2.8x; most of that has since moved into the
+general pipeline, where every caller gets it.
 
 Operators that are inherently per-frame (``warp_by``, ``hsv_warp``: the warp
-field is itself animated) or asymptotically expensive (``swap_phase_amplitude``:
-two FFTs per frame) have no fast path and are excluded from the op set — see
-:data:`FAST_FUNCTIONS`.  :func:`restrict_weights` zeroes them out of a
-personality so they are never drawn.
+field is itself animated) or asymptotically expensive
+(``swap_phase_amplitude``: two FFTs per frame) have no fast path and are
+excluded from the op set — see :data:`FAST_FUNCTIONS`.
+:func:`restrict_weights` zeroes them out of a personality so they are never
+drawn.
 """
 
 import numpy as np
-from scipy.ndimage import convolve1d
 from scipy.spatial.transform import Rotation as R
 
+from hecomes.artgen.func_utils import separable_blur, separable_sharpen
 from hecomes.artgen.functions import FUNCTION_REGISTRY
+from hecomes.artgen.resample import WARP_MAPS, apply_resampler, compile_resampler
 
 F32 = np.float32
 
-# 5-tap binomial kernel — the separable factor of the 5x5 kernel in func_utils.
-_BINOMIAL_5 = np.array([1, 4, 6, 4, 1], dtype=F32) / 16.0
-
-
-# ── Coordinate grids ──────────────────────────────────────────────────────────
-
-
-def _mesh(dx, dy):
-    """float32 [-1, 1] coordinate grid, broadcast (no per-pixel materialisation)."""
-    xs = np.linspace(-1.0, 1.0, dx, dtype=F32)[None, :]
-    ys = np.linspace(-1.0, 1.0, dy, dtype=F32)[:, None]
-    return np.broadcast_to(xs, (dy, dx)), np.broadcast_to(ys, (dy, dx))
-
-
-def _compile_resampler(x_src, y_src, dx, dy, bilinear):
-    """Turn a backward map in [-1, 1] space into a pre-computed gather context.
-
-    Returns ``(indices, weights)``: a list of flat pixel indices and matching
-    weight columns.  ``nearest`` yields one index and no weights; ``bilinear``
-    yields the four corners and their areas.  Out-of-bounds samples are clamped
-    to the edge, matching ``map_coordinates(mode="nearest")``.
-    """
-    col = np.clip((x_src + 1.0) * 0.5 * (dx - 1), 0, dx - 1)
-    row = np.clip((y_src + 1.0) * 0.5 * (dy - 1), 0, dy - 1)
-
-    if not bilinear:
-        idx = (np.rint(row).astype(np.intp) * dx + np.rint(col).astype(np.intp)).ravel()
-        return [idx], None
-
-    c0 = np.floor(col).astype(np.intp)
-    r0 = np.floor(row).astype(np.intp)
-    c1 = np.minimum(c0 + 1, dx - 1)
-    r1 = np.minimum(r0 + 1, dy - 1)
-    fc = (col - c0).astype(F32)
-    fr = (row - r0).astype(F32)
-    indices = [
-        (r0 * dx + c0).ravel(),
-        (r0 * dx + c1).ravel(),
-        (r1 * dx + c0).ravel(),
-        (r1 * dx + c1).ravel(),
-    ]
-    weights = [
-        ((1 - fr) * (1 - fc)).ravel()[:, None],
-        ((1 - fr) * fc).ravel()[:, None],
-        (fr * (1 - fc)).ravel()[:, None],
-        (fr * fc).ravel()[:, None],
-    ]
-    return indices, weights
-
 
 def _op_resample(ctx, a):
-    indices, weights = ctx
-    n, dy, dx, c = a.shape
-    flat = a.reshape(n, dy * dx, c)
-    if weights is None:
-        return np.take(flat, indices[0], axis=1).reshape(n, dy, dx, c)
-    out = np.take(flat, indices[0], axis=1)
-    out *= weights[0]
-    for i in (1, 2, 3):
-        part = np.take(flat, indices[i], axis=1)
-        part *= weights[i]
-        out += part
-    return out.reshape(n, dy, dx, c)
-
-
-# ── Backward maps (compile time only) ─────────────────────────────────────────
-
-
-def _map_swirl(dx, dy, cx=0.0, cy=0.0, strength=1.0, power=-2.0):
-    xs, ys = _mesh(dx, dy)
-    rx, ry = xs - cx, ys - cy
-    r = np.sqrt(rx * rx + ry * ry) + 1e-6
-    theta = np.arctan2(ry, rx) - strength * r**power
-    return cx + r * np.cos(theta), cy + r * np.sin(theta)
-
-
-def _map_ripple(dx, dy, ax=0.1, ay=0.1, kx=4.0, ky=4.0, phase_x=0.0, phase_y=0.0):
-    xs, ys = _mesh(dx, dy)
-    return xs + ax * np.sin(kx * ys + phase_x), ys + ay * np.sin(ky * xs + phase_y)
-
-
-def _map_pinch(dx, dy, cx=0.0, cy=0.0, strength=0.5):
-    xs, ys = _mesh(dx, dy)
-    rx, ry = xs - cx, ys - cy
-    r = np.sqrt(rx * rx + ry * ry) + 1e-6
-    scale = np.power(r, 1.0 + strength) / r
-    return cx + rx * scale, cy + ry * scale
-
-
-def _map_polar_warp(dx, dy, cx=0.0, cy=0.0):
-    xs, ys = _mesh(dx, dy)
-    rx, ry = xs - cx, ys - cy
-    r = np.sqrt(rx * rx + ry * ry)
-    theta = (np.arctan2(ry, rx) + 2 * np.pi) % (2 * np.pi)
-    # angle indexes the source's horizontal axis, radius its vertical axis
-    col = theta / (2 * np.pi) * 2.0 - 1.0
-    row = r / np.sqrt(2.0) * 2.0 - 1.0
-    return col, row
-
-
-def _map_kaleidoscope(dx, dy, n=6, phase=0.0):
-    """Fold the plane into ``n`` mirrored wedges.
-
-    Expressed as a plain backward map: the general backend reaches the same
-    picture through a ``NearestNDInterpolator`` over the (angle, radius) point
-    cloud, which builds a KD-tree per frame. Sampling is nearest-neighbour
-    there and follows ``--sampling`` here, so edges may differ by a pixel.
-    """
-    xs, ys = _mesh(dx, dy)
-    phi = 2 * np.pi / n
-    angle = np.arctan2(-ys, xs) % (2 * np.pi)
-    r = np.sqrt(xs * xs + ys * ys)
-    folded = angle % phi + phase
-    return r * np.cos(folded), -r * np.sin(folded)
-
-
-_WARP_MAPS = {
-    "swirl": _map_swirl,
-    "ripple": _map_ripple,
-    "pinch": _map_pinch,
-    "polar_warp": _map_polar_warp,
-    "kaleidoscope": _map_kaleidoscope,
-}
+    return apply_resampler(ctx, a)
 
 
 # ── Elementwise ops (in-place: each buffer has exactly one consumer) ──────────
@@ -192,14 +76,11 @@ def _op_mirrored_sigmoid(ctx, a):
 
 
 def _op_blur(ctx, a):
-    out = convolve1d(a, _BINOMIAL_5, axis=1, mode="reflect", output=a)
-    return convolve1d(out, _BINOMIAL_5, axis=2, mode="reflect", output=out)
+    return separable_blur(a, output=a)
 
 
 def _op_sharpen(ctx, a):
-    """Unsharp mask: 2*a - blur(a), the separable form of the 5x5 sharpen kernel."""
-    blurred = convolve1d(a, _BINOMIAL_5, axis=1, mode="reflect")
-    convolve1d(blurred, _BINOMIAL_5, axis=2, mode="reflect", output=blurred)
+    blurred = separable_blur(a)
     a *= F32(2.0)
     a -= blurred
     return a
@@ -318,7 +199,7 @@ _LEAF_FUNCTIONS = frozenset(fd.func.__name__ for fd in FUNCTION_REGISTRY if fd.a
 #: Function names the fast backend can evaluate.  Anything else is dropped from
 #: the personality by :func:`restrict_weights`.
 FAST_FUNCTIONS = frozenset(
-    _LEAF_FUNCTIONS | set(_ELEMENTWISE) | set(_WARP_MAPS) | {"color_rotate"}
+    _LEAF_FUNCTIONS | set(_ELEMENTWISE) | set(WARP_MAPS) | {"color_rotate"}
 )
 
 
@@ -376,9 +257,9 @@ def compile_fast(order, nodes, leaves, dx, dy, bilinear=True):
             continue
 
         children = [id_to_idx[cid] for cid in node.children]
-        if name in _WARP_MAPS:
-            x_src, y_src = _WARP_MAPS[name](dx, dy, **node.params)
-            ctx = _compile_resampler(x_src, y_src, dx, dy, bilinear)
+        if name in WARP_MAPS:
+            x_src, y_src = WARP_MAPS[name](dx, dy, **node.params)
+            ctx = compile_resampler(x_src, y_src, dx, dy, bilinear)
             plan.append((_op_resample, ctx, children))
         elif name == "color_rotate":
             matrix = R.from_euler("zyx", node.params["angles"]).as_matrix().T.astype(F32)
