@@ -70,6 +70,9 @@ python app.py
 
 Opens at `http://localhost:5000`. Build and explore trees interactively, preview images, edit nodes, and save/load sessions.
 
+For a browser view of generated *video* rather than an editor, see
+[Video (live server)](#video-live-server).
+
 ### Standalone image
 
 ```bash
@@ -162,8 +165,9 @@ Cost varies several-fold between trees: a chain of `sin`/`cos` is nearly free,
 three stacked `swirl`s is not. Rather than assume, each candidate tree is timed
 on real chunks through the real worker pool and redrawn if it falls short —
 so a tree that cannot hold the frame rate never reaches the encoder. Pass
-`--no-budget` to keep whatever is drawn, or `--budget-fps` to aim somewhere
-other than `--fps`.
+`--no-budget` to keep whatever is drawn — the probe is then skipped entirely,
+so no throughput is reported — or `--budget-fps` to aim somewhere other than
+`--fps`.
 
 The budget is measured with the pool rather than by timing one worker and
 multiplying: the workers are memory-bandwidth bound and scale sublinearly (82%
@@ -215,6 +219,91 @@ fast path and are dropped from the personality, with a note on startup:
 
 `kaleidoscope` is a plain backward map in both backends now — see
 [Performance](#performance).
+
+### Video (live server)
+
+The real-time backend streamed straight to a browser, generated frame by frame
+against a wall clock. Nothing is written to disk and nothing is pre-rendered:
+what you see is being computed as you watch it.
+
+```bash
+hecomes-video-live            # then open http://127.0.0.1:5001/
+```
+
+Measured at 540x960 on three workers of a four-core box, counting frames as
+they arrive at an HTTP client: **30.00 fps over twenty seconds**, 30 or 31
+frames in every one-second bucket, median inter-frame gap 33.3 ms and 40 ms at
+the 99th percentile — on a tree the budget rated at only 1.27x real time.
+Three viewers at once got the same rate and the same frames; generation is
+shared, so extra viewers are free.
+
+The page shows the stream next to the live numbers: delivered fps, the
+generator's spare capacity, the current seed and its operator chain. A **New
+scene** button redraws the tree.
+
+#### How it holds the frame rate
+
+- **JPEG encoding happens in the workers**, not the server thread. That
+  parallelises the 1.7 ms/frame encode and shrinks what crosses the pool's
+  pipe from 1.5 MB of raw `rgb24` per frame to roughly 9-32 KB — 0.3-1.0 MB/s
+  at 30 fps, which is also what goes over the network.
+- **The producer paces itself.** When generation is faster than real time the
+  workers idle rather than racing ahead; at most `--processes + 1` chunks are
+  ever in flight, bounding memory and the delay between computing a frame and
+  showing it. If the pipeline ever falls a full second behind, the clock
+  resyncs instead of trying to catch up.
+- **Slow viewers skip frames.** Every viewer reads the same latest frame, so a
+  browser that cannot keep up misses frames instead of dragging the generator
+  below real time.
+- **The same frame-rate budget** as `hecomes-video-fast` picks the tree, so a
+  scene that could not hold 30 fps never reaches the stream. Here it is
+  conservative: it reserves 15% for an x264 encoder that this path does not
+  run, where JPEG costs about 5%.
+- **The pacing clock starts at the first frame**, not when the scene is
+  requested. Otherwise drawing the tree and forking the pool would read as
+  lateness and the scene would open by dumping a third of a second of frames
+  at once.
+
+#### The cost of switching scenes
+
+The stream is not buffered across a scene change, so the last frame freezes
+while the next tree is drawn. Timing candidate trees costs about 2.2 seconds
+*each*, and the budget rejects however many it must: measured freezes ran
+**2 to 7 seconds**, the worst of them after two rejections.
+
+`--no-budget` cuts that to **under a second** — pool startup only, since a tree
+is now taken unmeasured rather than probed and then kept regardless. The trade
+is real: an unvetted scene may run below 30 fps for its whole turn, which the
+`delivered` counter on the page will show in amber.
+
+So `--rotate` suits a display left running, not a demo you are watching
+closely. The default `--rotate 0` never switches on its own: one scene runs
+indefinitely, kept moving by the leaf drift, and `/next` costs the same freeze
+only when you ask for it.
+
+#### Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--host` | Bind address (`0.0.0.0` to expose on the LAN) | `127.0.0.1` |
+| `--port` | Port | 5001 |
+| `-W`, `--width` / `-H`, `--height` | Frame size | 540 x 960 |
+| `-f`, `--fps` | Frame rate to stream at | 30 |
+| `-p`, `--processes` | Worker processes | CPU count minus one |
+| `-q`, `--quality` | JPEG quality (1-95) | 80 |
+| `-r`, `--rotate` | Seconds before drawing a new scene (0 = never) | 0 |
+| `-S`, `--seed` | Seed for the first scene | random |
+
+`--sampling`, `--min-depth`, `--max-depth`, `--drift`, `--color-space`,
+`--personality`, `--budget-fps`, `--max-tries` and `--no-budget` behave exactly
+as in `hecomes-video-fast`.
+
+Endpoints: `/` (page), `/stream.mjpg` (the MJPEG stream — usable directly in an
+`<img>`, VLC or ffmpeg), `/stats` (JSON), `POST /next` (new scene).
+
+This runs on Flask's development server, which is fine for one machine on a
+trusted network and is not meant to face the internet. Binding `0.0.0.0` puts
+an unauthenticated stream on your LAN.
 
 ### Video (path animation backend)
 

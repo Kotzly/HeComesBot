@@ -103,14 +103,17 @@ def draw_plan_within_budget(seed, weights, args, chunks):
     """Draw trees until one clears the frame-rate budget.
 
     Returns ``(plan, chain, fps, seed)`` where ``fps`` is the measured
-    aggregate generation throughput.  With ``--no-budget`` the first tree is
-    returned whatever it measures.
+    aggregate generation throughput, or ``None`` for it under ``--no-budget``:
+    the first tree is taken unmeasured, since nothing would be done with the
+    number and the probe costs about as much as a two-second stall.
     """
     target = (args.budget_fps or args.fps) * _ENCODER_HEADROOM
     for attempt in range(args.max_tries):
         plan, chain = build_plan(seed, weights, args)
+        if args.no_budget:
+            return plan, chain, None, seed
         fps = measure_fps(plan, args.color_space, chunks, args.processes)
-        if args.no_budget or fps >= target:
+        if fps >= target:
             if attempt:
                 print(f"  ({attempt} tree(s) rejected as too slow)")
             return plan, chain, fps, seed
@@ -219,8 +222,11 @@ def main(argv=None):
               f"{args.fps}fps x {args.duration}s, seed {seed}")
         plan, chain, fps, seed = draw_plan_within_budget(seed, weights, args, probe_chunks)
         print(f"  tree: {' -> '.join(chain)}")
-        print(f"  generation: {fps:.1f} fps on {args.processes} workers "
-              f"({fps / args.fps:.2f}x real time, encoder not included)")
+        if fps is None:
+            print(f"  generation: not measured (--no-budget)")
+        else:
+            print(f"  generation: {fps:.1f} fps on {args.processes} workers "
+                  f"({fps / args.fps:.2f}x real time, encoder not included)")
 
         if args.benchmark:
             continue
