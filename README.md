@@ -190,7 +190,7 @@ All flags of `hecomes-video` behave the same way. What differs:
 | `-p`, `--processes` | Worker processes | CPU count minus one |
 | `-e`, `--extension` | Container | `mp4` |
 | `--sampling` | Warp interpolation: `bilinear`, `nearest` | `bilinear` |
-| `--drift` | Leaf drift per second (the delta backend's `alpha`) | 4e-3 |
+| `--drift` | Leaf drift per second, which `hecomes-video` hardcodes | 4e-3 |
 | `--preset` | Encoder speed preset for x264/x265 | `veryfast` |
 | `--budget-fps` | Throughput a tree must reach to be accepted | `--fps` |
 | `--max-tries` | Trees to draw before giving up on the budget | 20 |
