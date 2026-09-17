@@ -33,6 +33,7 @@ from numpy.random import rand
 
 from hecomes.artgen.tree_paths import integrate_ode_paths, load_paths_config
 from hecomes.audiogen import generate_wav as generate_audio_wav
+from hecomes.audiosync import generate_wav as generate_synced_wav
 from hecomes.cli._video_utils import (
     build_ffmpeg_cmd,
     build_path_plan,
@@ -44,14 +45,19 @@ from hecomes.cli._video_utils import (
 )
 from hecomes.config import PERSONALITIES_DIR, load_personality_list
 from hecomes.instagram.poster import InstagramPoster, load_credentials
+from hecomes.video_features import FrameFeatureExtractor
 
 VALID_TYPES = ("image", "reel", "story-image", "story-video")
+
+# Audio encoder per container; WebM and Ogg cannot hold AAC.
+AUDIO_CODECS = {"webm": "libopus", "ogg": "libvorbis"}
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
-def _generate_video(args, plans, n_color, output_path):
+def _generate_video(args, plans, n_color, output_path, extract_features=False):
+    """Render and encode the video; return per-frame features if requested, else None."""
     n_frames = args.fps * args.duration
     all_steps = (
         np.arange(n_frames) * args.step / args.fps
@@ -71,43 +77,52 @@ def _generate_video(args, plans, n_color, output_path):
         bitrate=args.bitrate,
     )
 
+    extractor = FrameFeatureExtractor() if extract_features else None
     print(f"Encoding {n_frames} frames to {output_path}")
     run_ffmpeg_pipeline(
         ffmpeg_cmd, args.n_process, chunk_steps, compute_chunk_paths,
         pool_initializer=init_worker,
         pool_initargs=(plans, args.color_space, args.independent_channels, n_color, args.gpu),
+        on_chunk=extractor,
     )
+    return extractor.features() if extractor is not None else None
 
 
-def _attach_audio(args, video_path, seed):
+def _attach_audio(args, video_path, seed, features=None):
     """Generate a matching-length audio track and mux it into ``video_path`` in place.
 
-    Uses ffmpeg to remux with ``-c:v copy`` (no re-encode) and attenuates the
-    audio by ``args.audio_volume``. The audio seed defaults to ``seed ^ 0xA0D10``
-    so it does not interfere with the video RNG stream.
+    With ``features`` (per-frame output of :class:`FrameFeatureExtractor`) the
+    track follows the video via :mod:`hecomes.audiosync`; without, it is an
+    independent tree. Uses ffmpeg to remux with ``-c:v copy`` (no re-encode)
+    and attenuates the audio by ``args.audio_volume``. The audio seed defaults
+    to ``seed ^ 0xA0D10`` so it does not interfere with the video RNG stream.
     """
     audio_seed = args.audio_seed if args.audio_seed is not None else (seed ^ 0xA0D10)
+    ext = os.path.splitext(video_path)[1]
     audio_tmp = video_path + ".audio.wav"
-    muxed_tmp = video_path + ".muxed" + os.path.splitext(video_path)[1]
+    muxed_tmp = video_path + ".muxed" + ext
 
+    mode = "video-synced" if features is not None else "independent"
     print(
-        f"[audio] Generating {args.duration}s track "
+        f"[audio] Generating {args.duration}s {mode} track "
         f"(seed={audio_seed}, min-depth={args.audio_min_depth}, max-depth={args.audio_max_depth})"
     )
-    generate_audio_wav(
-        audio_tmp,
-        seconds=float(args.duration),
+    tree_kwargs = dict(
         seed=audio_seed,
         min_depth=args.audio_min_depth,
         max_depth=args.audio_max_depth,
     )
+    if features is not None:
+        generate_synced_wav(audio_tmp, features, fps=args.fps, **tree_kwargs)
+    else:
+        generate_audio_wav(audio_tmp, seconds=float(args.duration), **tree_kwargs)
 
     cmd = [
         "ffmpeg", "-y",
         "-i", video_path,
         "-i", audio_tmp,
         "-c:v", "copy",
-        "-c:a", "aac",
+        "-c:a", AUDIO_CODECS.get(ext.lstrip(".").lower(), "aac"),
         "-b:a", "128k",
         "-filter:a", f"volume={args.audio_volume}",
         "-shortest",
@@ -249,9 +264,12 @@ def _generate_to_file(args, seed):
             else:
                 color_plans = [build_path_plan(weights=p, seed=seed, **build_kwargs)]
                 n_color = 1
-            _generate_video(args, color_plans, n_color, tmp_path)
+            features = _generate_video(
+                args, color_plans, n_color, tmp_path,
+                extract_features=not (args.no_audio or args.no_audio_sync),
+            )
             if not args.no_audio:
-                _attach_audio(args, tmp_path, seed)
+                _attach_audio(args, tmp_path, seed, features)
         else:
             _generate_image(args, seed, tmp_path)
     except Exception:
@@ -405,6 +423,15 @@ def _parse_args():
     parser.add_option(
         "--no-audio", dest="no_audio", action="store_true", default=False,
         help="Skip audio generation for video posts.",
+    )
+    parser.add_option(
+        "--no-audio-sync", dest="no_audio_sync", action="store_true", default=False,
+        help=(
+            "Generate the audio independently of the video. By default the "
+            "track follows the rendered frames: motion drives loudness and "
+            "hits, brightness a low-pass, hue the pitch, saturation the "
+            "distortion, and where things move the stereo pan."
+        ),
     )
     parser.add_option(
         "--audio-volume", dest="audio_volume", type=float, default=0.05,

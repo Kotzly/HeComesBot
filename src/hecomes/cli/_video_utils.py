@@ -87,9 +87,12 @@ def build_ffmpeg_cmd(width, height, fps, codec, output_path,
 
 
 def run_ffmpeg_pipeline(ffmpeg_cmd, n_process, chunk_steps, compute_fn,
-                        pool_initializer=None, pool_initargs=()):
+                        pool_initializer=None, pool_initargs=(), on_chunk=None):
     """
     Stream rendered frames from a worker pool into an ffmpeg subprocess.
+
+    ``on_chunk``, if given, is called in the main process with each rendered
+    uint8 chunk ``(n, H, W, C)`` in display order, after it is written.
 
     Raises KeyboardInterrupt (after cleanup) if interrupted mid-encoding so
     callers in a multi-video loop can decide whether to continue (``pass``) or
@@ -105,6 +108,8 @@ def run_ffmpeg_pipeline(ffmpeg_cmd, n_process, chunk_steps, compute_fn,
             try:
                 for frames in pool.imap(compute_fn, chunk_steps):
                     proc.stdin.write(frames.tobytes())
+                    if on_chunk is not None:
+                        on_chunk(frames)
             except KeyboardInterrupt:
                 print("\nInterrupted — closing FFmpeg pipe...")
                 pool.terminate()
