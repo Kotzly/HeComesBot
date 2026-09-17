@@ -21,6 +21,7 @@ instagram = ["cloudinary>=1.36", "requests>=2.28"]
 hecomes-image = "hecomes.cli.image:main"
 hecomes-video = "hecomes.cli.video:main"
 hecomes-video-paths = "hecomes.cli.video_paths:main"
+hecomes-video-fast = "hecomes.cli.video_fast:main"
 hecomes-instagram = "hecomes.cli.instagram:main"
 
 [tool.setuptools.packages.find]
