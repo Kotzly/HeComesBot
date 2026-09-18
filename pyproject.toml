@@ -22,6 +22,7 @@ hecomes-image = "hecomes.cli.image:main"
 hecomes-video = "hecomes.cli.video:main"
 hecomes-video-paths = "hecomes.cli.video_paths:main"
 hecomes-video-fast = "hecomes.cli.video_fast:main"
+hecomes-video-live = "hecomes.cli.video_live:main"
 hecomes-instagram = "hecomes.cli.instagram:main"
 
 [tool.setuptools.packages.find]

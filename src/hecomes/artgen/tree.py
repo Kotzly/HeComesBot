@@ -11,6 +11,7 @@ except ImportError:
     cp = None
 
 from hecomes.artgen.functions import FUNCTION_REGISTRY, REGISTRY_BY_NAME, FunctionDef
+from hecomes.artgen.resample import apply_compiled, compile_warp_params
 
 
 def random_delta(alpha=5e-3):
@@ -169,6 +170,9 @@ def compile_plan(order: list, nodes: dict, leaves: dict) -> list:
       - inner nodes: func=callable, params=dict, base=None, delta=None, child_indices=[int, ...]
     """
     id_to_idx = {nid: i for i, nid in enumerate(order)}
+    # Frame size comes from any leaf; without one there is nothing to compile.
+    leaf_shape = next(iter(leaves.values()), None)
+    dy, dx = leaf_shape.shape[:2] if leaf_shape is not None else (0, 0)
     plan = []
     for nid in order:
         node = nodes[nid]
@@ -176,7 +180,16 @@ def compile_plan(order: list, nodes: dict, leaves: dict) -> list:
             plan.append((None, None, leaves[nid], node.delta, []))
         else:
             child_idxs = [id_to_idx[cid] for cid in node.children]
-            plan.append((node.func.func, node.params, None, None, child_idxs))
+            # Warp parameters are fixed for the life of the plan, so the
+            # backward map is compiled once here rather than once per chunk.
+            warp_params = (
+                compile_warp_params(node.func.func.__name__, node.params, dx, dy)
+                if leaf_shape is not None else None
+            )
+            if warp_params is not None:
+                plan.append((apply_compiled, warp_params, None, None, child_idxs))
+            else:
+                plan.append((node.func.func, node.params, None, None, child_idxs))
     return plan
 
 

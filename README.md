@@ -70,6 +70,9 @@ python app.py
 
 Opens at `http://localhost:5000`. Build and explore trees interactively, preview images, edit nodes, and save/load sessions.
 
+For a browser view of generated *video* rather than an editor, see
+[Video (live server)](#video-live-server).
+
 ### Standalone image
 
 ```bash
@@ -125,41 +128,36 @@ Options:
 
 ### Video (real-time backend)
 
-Same animation model as the delta backend, on a stripped-down evaluator that
-keeps up with playback. At 540x960 on four cores it generates 2-4x faster than
-real time where the general backend manages 0.3x.
+Same animation model as the delta backend, on a stripped-down evaluator built
+for streaming. At 540x960 on four cores it generates 2-4x faster than real time.
 
 ```bash
 hecomes-video-fast -W 540 -H 960 -d 15
 ```
 
-Three changes carry the speedup, all in `artgen/fast.py`:
+Most of what once made this backend fast now lives in the shared pipeline (see
+[Performance](#performance)), and with bilinear sampling the two produce
+bit-identical output. What remains specific to it:
 
-- **Static warps are pre-compiled.** `swirl`, `ripple`, `pinch`, `polar_warp` and
-  `kaleidoscope` resolve to a backward map that depends only on the node
-  parameters and the frame size, never on time. The sample coordinates and
-  bilinear weights are computed once at compile time and each frame costs one
-  gather. The general backend instead rebuilds the coordinate grid and calls
-  `map_coordinates` once per channel per frame — 30 calls per 10-frame chunk
-  against one here.
-- **Separable convolution.** The 5x5 binomial kernel behind `blur` and `sharpen`
-  factors into two 1D passes (10 multiply-adds per pixel instead of 25), applied
-  to the whole chunk at once instead of per frame per channel.
-- **In-place elementwise ops.** Every buffer in the plan has exactly one
+- **In-place elementwise ops.** Every buffer in a plan has exactly one
   consumer, so `sin`/`cos`/`abs` and the binary ops write into their input.
+  The general backend cannot assume this — the web UI re-evaluates subtrees of
+  a shared node graph.
+- **`--sampling nearest`**, roughly a quarter of the cost per warp.
+- **A restricted operator set** plus the frame-rate budget below, so nothing
+  in a plan is slow by surprise.
 
-Output is unchanged: with `--sampling bilinear` the fast backend reproduces the
-general one to float32 precision (largest observed difference on a rendered
-frame: 1/255).
+One worker at 540x960, mean over 8 trees, four cores
+(`python profiling/bench_fast.py -W 540 -H 960 -n 8`):
 
-Measured with `python profiling/bench_fast.py -W 540 -H 960 -n 12`, one worker,
-mean over 12 trees on four cores:
-
-| Backend | 540x960 |
+| Backend | fps |
 |---|---|
-| delta / path (general) | 9.7 fps |
-| fast, `--sampling bilinear` | 27.0 fps |
-| fast, `--sampling nearest` | 40.3 fps |
+| general (delta or paths) | 17.6 |
+| fast, `--sampling bilinear` | 22.5 (1.3x) |
+| fast, `--sampling nearest` | 37.5 (2.1x) |
+
+Before the shared optimisations the gap was 2.8x; most of it moved into the
+general pipeline, where every caller benefits.
 
 #### Staying ahead of the clock
 
@@ -167,8 +165,9 @@ Cost varies several-fold between trees: a chain of `sin`/`cos` is nearly free,
 three stacked `swirl`s is not. Rather than assume, each candidate tree is timed
 on real chunks through the real worker pool and redrawn if it falls short —
 so a tree that cannot hold the frame rate never reaches the encoder. Pass
-`--no-budget` to keep whatever is drawn, or `--budget-fps` to aim somewhere
-other than `--fps`.
+`--no-budget` to keep whatever is drawn — the probe is then skipped entirely,
+so no throughput is reported — or `--budget-fps` to aim somewhere other than
+`--fps`.
 
 The budget is measured with the pool rather than by timing one worker and
 multiplying: the workers are memory-bandwidth bound and scale sublinearly (82%
@@ -191,7 +190,7 @@ All flags of `hecomes-video` behave the same way. What differs:
 | `-p`, `--processes` | Worker processes | CPU count minus one |
 | `-e`, `--extension` | Container | `mp4` |
 | `--sampling` | Warp interpolation: `bilinear`, `nearest` | `bilinear` |
-| `--drift` | Leaf drift per second (the delta backend's `alpha`) | 4e-3 |
+| `--drift` | Leaf drift per second, which `hecomes-video` hardcodes | 4e-3 |
 | `--preset` | Encoder speed preset for x264/x265 | `veryfast` |
 | `--budget-fps` | Throughput a tree must reach to be accepted | `--fps` |
 | `--max-tries` | Trees to draw before giving up on the budget | 20 |
@@ -201,7 +200,8 @@ All flags of `hecomes-video` behave the same way. What differs:
 `--sampling nearest` makes each warp about four times cheaper by dropping
 bilinear interpolation. On warp-heavy trees the difference is visible as
 aliasing along edges (up to 23/255 per pixel); on trees without warps there is
-none.
+none. With `--sampling bilinear` the output matches the general backend
+exactly.
 
 H.264 output is forced to `yuv420p`, which needs even width and height. The
 other CLIs leave the choice to ffmpeg, which picks `yuv444p` for `rgb24` input —
@@ -217,10 +217,93 @@ fast path and are dropped from the personality, with a note on startup:
 - `warp_by`, `hsv_warp` — the warp field is itself animated, so the sample
   coordinates cannot be pre-computed.
 
-`kaleidoscope` is reachable here but not in the general backend in practice: the
-general one builds a KD-tree per frame through `NearestNDInterpolator`, while
-this one expresses the same fold as a plain backward map. Sampling follows
-`--sampling`, so edges may differ by a pixel.
+`kaleidoscope` is a plain backward map in both backends now — see
+[Performance](#performance).
+
+### Video (live server)
+
+The real-time backend streamed straight to a browser, generated frame by frame
+against a wall clock. Nothing is written to disk and nothing is pre-rendered:
+what you see is being computed as you watch it.
+
+```bash
+hecomes-video-live            # then open http://127.0.0.1:5001/
+```
+
+Measured at 540x960 on three workers of a four-core box, counting frames as
+they arrive at an HTTP client: **30.00 fps over twenty seconds**, 30 or 31
+frames in every one-second bucket, median inter-frame gap 33.3 ms and 40 ms at
+the 99th percentile — on a tree the budget rated at only 1.27x real time.
+Three viewers at once got the same rate and the same frames; generation is
+shared, so extra viewers are free.
+
+The page shows the stream next to the live numbers: delivered fps, the
+generator's spare capacity, the current seed and its operator chain. A **New
+scene** button redraws the tree.
+
+#### How it holds the frame rate
+
+- **JPEG encoding happens in the workers**, not the server thread. That
+  parallelises the 1.7 ms/frame encode and shrinks what crosses the pool's
+  pipe from 1.5 MB of raw `rgb24` per frame to roughly 9-32 KB — 0.3-1.0 MB/s
+  at 30 fps, which is also what goes over the network.
+- **The producer paces itself.** When generation is faster than real time the
+  workers idle rather than racing ahead; at most `--processes + 1` chunks are
+  ever in flight, bounding memory and the delay between computing a frame and
+  showing it. If the pipeline ever falls a full second behind, the clock
+  resyncs instead of trying to catch up.
+- **Slow viewers skip frames.** Every viewer reads the same latest frame, so a
+  browser that cannot keep up misses frames instead of dragging the generator
+  below real time.
+- **The same frame-rate budget** as `hecomes-video-fast` picks the tree, so a
+  scene that could not hold 30 fps never reaches the stream. Here it is
+  conservative: it reserves 15% for an x264 encoder that this path does not
+  run, where JPEG costs about 5%.
+- **The pacing clock starts at the first frame**, not when the scene is
+  requested. Otherwise drawing the tree and forking the pool would read as
+  lateness and the scene would open by dumping a third of a second of frames
+  at once.
+
+#### The cost of switching scenes
+
+The stream is not buffered across a scene change, so the last frame freezes
+while the next tree is drawn. Timing candidate trees costs about 2.2 seconds
+*each*, and the budget rejects however many it must: measured freezes ran
+**2 to 7 seconds**, the worst of them after two rejections.
+
+`--no-budget` cuts that to **under a second** — pool startup only, since a tree
+is now taken unmeasured rather than probed and then kept regardless. The trade
+is real: an unvetted scene may run below 30 fps for its whole turn, which the
+`delivered` counter on the page will show in amber.
+
+So `--rotate` suits a display left running, not a demo you are watching
+closely. The default `--rotate 0` never switches on its own: one scene runs
+indefinitely, kept moving by the leaf drift, and `/next` costs the same freeze
+only when you ask for it.
+
+#### Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--host` | Bind address (`0.0.0.0` to expose on the LAN) | `127.0.0.1` |
+| `--port` | Port | 5001 |
+| `-W`, `--width` / `-H`, `--height` | Frame size | 540 x 960 |
+| `-f`, `--fps` | Frame rate to stream at | 30 |
+| `-p`, `--processes` | Worker processes | CPU count minus one |
+| `-q`, `--quality` | JPEG quality (1-95) | 80 |
+| `-r`, `--rotate` | Seconds before drawing a new scene (0 = never) | 0 |
+| `-S`, `--seed` | Seed for the first scene | random |
+
+`--sampling`, `--min-depth`, `--max-depth`, `--drift`, `--color-space`,
+`--personality`, `--budget-fps`, `--max-tries` and `--no-budget` behave exactly
+as in `hecomes-video-fast`.
+
+Endpoints: `/` (page), `/stream.mjpg` (the MJPEG stream — usable directly in an
+`<img>`, VLC or ffmpeg), `/stats` (JSON), `POST /next` (new scene).
+
+This runs on Flask's development server, which is fine for one machine on a
+trusted network and is not meant to face the internet. Binding `0.0.0.0` puts
+an unauthenticated stream on your LAN.
 
 ### Video (path animation backend)
 
@@ -403,6 +486,87 @@ Options: `-s` seed, `-d` dimensions, `-o` output path, `-f` fontsize, `-D` use `
 
 ---
 
+## Performance
+
+Four changes to the shared pipeline, so every entry point — images, both video
+backends and the web UI — gets them.
+
+**Warps compile to a gather.** `swirl`, `ripple`, `pinch`, `polar_warp` and
+`kaleidoscope` are backward maps: they depend only on their parameters and the
+frame size, never on the pixel data and never on time. They used to rebuild the
+coordinate grid and call `map_coordinates` once per channel per frame — 30
+scipy calls per ten-frame chunk. `artgen/resample.py` computes the map once and
+applies it to the whole batch in one pass. Video plans compile it once for the
+whole video; `compile_plan` and `compile_plan_paths` both do this, since an
+inner node's parameters never change over its life.
+
+The contexts are deliberately compact. Storing four corner indices and four
+weights costs eight full-resolution arrays — 398 MB per warp node at 4K.
+Clamping the top-left corner one pixel short of the edge makes the other three
+`base + 1`, `base + dx` and `base + dx + 1`, so one int32 index and two float32
+fractions suffice: 100 MB at 4K, for 7% more time in the gather.
+
+**Convolutions are separable.** The 5x5 binomial kernel behind `blur` and
+`sharpen` factors into two 1D passes — 10 multiply-adds per pixel instead of
+25 — applied to a whole batch rather than per frame per channel. `sharpen` is
+the same kernel with its centre tap moved, which is exactly `2*a - blur(a)`.
+
+**`linear_mesh` returns float32 broadcast views.** It used to build two
+`np.repeat` float64 arrays (4.1 MB each at 540x960) on every call, and every
+warp and gradient leaf calls it. It also meant warp coordinates were computed
+at double precision and cast back down.
+
+**`kaleidoscope` is a backward map.** It used to build a
+`NearestNDInterpolator` KD-tree per frame for what is a fixed fold, which is
+why it was not recommended above 400x400.
+
+| | before | after |
+|---|---|---|
+| image eval, 512x512 | 76.7 ms | 24.8 ms |
+| image eval, 1024x1024 | 347.1 ms | 198.8 ms |
+| `hecomes-video` (delta), 540x960, one worker | 8.6 fps | 18.2 fps |
+| `hecomes-video-paths`, 540x960, one worker | 7.5 fps | 15.1 fps |
+| `kaleidoscope`, 400x400 | 423 ms | 0.35 ms |
+| `kaleidoscope`, 3840x2160 | impractical | 1.0 s |
+
+End-to-end numbers are lower, since PNG encoding, interpreter startup and
+ffmpeg do not speed up: a 4K image goes from 3.4 s to 2.2 s.
+
+Compiling warps once per plan rather than once per chunk — the last of these —
+is worth only 1.04x at the default `--chunk_size 10`, rising to 1.12x at
+`--chunk_size 3`, because the compile cost is already amortised across the
+chunk. It is kept for the small-chunk case and because it makes the general
+and fast plans structurally identical.
+
+### Is the output the same?
+
+Yes, to within one step of 8-bit output, at every size tested including 4K.
+Rendered images differ by at most 1/255 and no pixel differs by more than
+that. The residual comes entirely from `linear_mesh` dropping to float32; the
+resampler itself agrees with `map_coordinates` to float32 epsilon (1.8e-07) at
+4K.
+
+```bash
+python profiling/verify_parity.py --sizes 256x256 512x512 3840x2160
+```
+
+checks the separable kernels against the dense 5x5 form, the resampler against
+`map_coordinates` warp by warp, and the general plan against the fast plan on
+whole trees.
+
+Two caveats worth knowing:
+
+- **`swirl` near its singularity.** With `power = -2`, the rotation angle is
+  `strength * r**-2`, which is hypersensitive close to the centre: float32
+  coordinates send a handful of pixels to a visibly different source. On a 4K
+  frame of smooth content that is 22 pixels out of 8.3 million; on white noise
+  it is 0.24%. It does not survive into the 8-bit output.
+- **`kaleidoscope` changed algorithm.** Nearest-in-(angle, radius), which the
+  KD-tree computed, is not the same as nearest-in-(x, y). On smooth content
+  4.3% of pixels differ by more than 0.01 and 0.08% by more than 0.1, along
+  the wedge seams and near the centre. This one is a real difference, not a
+  rounding artefact.
+
 ## Color spaces
 
 - **rgb** — default, channels clipped to [0, 1].
@@ -434,8 +598,8 @@ Notable functions:
 - **cone** — elliptical cone function; produces concentric circles/ellipses.
 - **sphere** — soft radial gradient, falls off as the distance from center grows.
 - **saddle** — hyperbolic paraboloid (`x² - y²`). Costly; use low probability.
-- **swap_phase_amplitude** — swaps FFT phase/magnitude between two images. Very costly.
-- **kaleidoscope** — not recommended above 400×400.
+- **swap_phase_amplitude** — swaps FFT phase/magnitude between two images. Very costly, and the one unary/binary operator with no fast path.
+- **kaleidoscope** — folds the plane into `n` mirrored wedges. Compiles to a backward map, so it is cheap at any size.
 - **color_rotate** — rotation in color space; helps diversify away from pure R/G/B outputs.
 - **circular_mean / circular_mean_far** — mean of two hue values along the shorter/longer arc.
 - **hue_diff** — angular distance between two hue values, in [0, 0.5].

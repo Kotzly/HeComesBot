@@ -49,6 +49,7 @@ from hecomes.artgen.paths import (
     RandomWalkPath,
     path_from_dict,
 )
+from hecomes.artgen.resample import apply_compiled, compile_warp_params
 from hecomes.artgen.tree import Node, get_random_function, linearize
 
 
@@ -317,14 +318,18 @@ def compile_plan_paths(
             ))
         else:
             child_idxs = [id_to_idx[cid] for cid in node.children]
+            # Paths are sampled for leaves only (see build_node_paths), so an
+            # inner node's params never change over time and a warp's backward
+            # map can be compiled once for the whole video instead of per chunk.
+            warp_params = compile_warp_params(node.func.func.__name__, node.params, dx, dy)
             plan.append((
                 False,
-                node.func.func,
+                apply_compiled if warp_params is not None else node.func.func,
                 0,
                 0,
                 [],
                 {},
-                node.params,
+                warp_params if warp_params is not None else node.params,
                 child_idxs,
             ))
     return plan
