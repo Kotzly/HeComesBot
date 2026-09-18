@@ -28,7 +28,7 @@ import time
 from collections import deque
 
 import numpy as np
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 from PIL import Image
 
 from hecomes.artgen.fast import restrict_weights
@@ -88,6 +88,11 @@ class FrameHub:
                 return None, seen
             return self._frame, self._seq
 
+    def latest_with_seq(self):
+        """Return ``(jpeg, seq)`` for the current frame without blocking."""
+        with self._cond:
+            return self._frame, self._seq
+
 
 class Producer(threading.Thread):
     """Draws scenes and pushes their frames into a :class:`FrameHub` in real time."""
@@ -122,8 +127,15 @@ class Producer(threading.Thread):
     def run(self):
         try:
             while not self._stop.is_set():
-                self._play_scene()
-        except BaseException as exc:  # SystemExit included: the budget raises it
+                # A streak of slow trees must not end the stream: the budget
+                # raises SystemExit, so swallow it and draw again.
+                try:
+                    self._play_scene()
+                    self.status["error"] = None
+                except SystemExit as exc:
+                    self.status["error"] = str(exc) or type(exc).__name__
+                    print(f"Budget exhausted, retrying: {exc}")
+        except BaseException as exc:
             self.status["error"] = str(exc) or type(exc).__name__
             raise
 
@@ -192,6 +204,14 @@ _PAGE = """<!doctype html>
          font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1rem; }
   img { max-height: 90vh; max-width: 100%; border-radius: 6px; background: #17171b; }
   aside { min-width: 15rem; max-width: 22rem; }
+  #stage { display: flex; align-items: center; justify-content: center; cursor: zoom-in; }
+  /* Real fullscreen, and the CSS fallback for browsers that refuse it on a
+     non-video element (iOS Safari).  Both hide the chrome and fill the view. */
+  #stage:fullscreen { width: 100vw; height: 100vh; background: #000; cursor: zoom-out; }
+  #stage:fullscreen img { max-height: 100vh; max-width: 100vw; border-radius: 0; }
+  body.faux #stage { position: fixed; inset: 0; z-index: 99; background: #000; cursor: zoom-out; }
+  body.faux #stage img { max-height: 100vh; max-width: 100vw; border-radius: 0; }
+  body.faux aside { display: none; }
   h1 { font-size: 1rem; letter-spacing: .08em; text-transform: uppercase; color: #8a8a94; margin: 0 0 1rem; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: .35rem .9rem; margin: 0 0 1.25rem; }
   dt { color: #8a8a94; } dd { margin: 0; overflow-wrap: anywhere; }
@@ -200,7 +220,7 @@ _PAGE = """<!doctype html>
   button:hover { background: #2d2d36; }
   .warn { color: #e5a663; }
 </style>
-<img src="/stream.mjpg" alt="live stream">
+<div id="stage"><img id="frame" alt="live stream"></div>
 <aside>
   <h1>HeComes live</h1>
   <dl>
@@ -211,9 +231,70 @@ _PAGE = """<!doctype html>
     <dt>tree</dt><dd id="tree">—</dd>
   </dl>
   <button onclick="fetch('/next', {method: 'POST'})">New scene</button>
+  <button id="fs">Fullscreen</button>
   <p id="err" class="warn"></p>
 </aside>
 <script>
+const stage = document.getElementById('stage');
+
+function nativeFullscreenElement() {
+  return document.fullscreenElement || document.webkitFullscreenElement;
+}
+
+async function toggleFullscreen() {
+  if (document.body.classList.contains('faux')) {
+    document.body.classList.remove('faux');
+    return;
+  }
+  if (nativeFullscreenElement()) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    return;
+  }
+  const request = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  if (request) {
+    try {
+      await request.call(stage);
+      return;
+    } catch (e) { /* refused — fall through to the CSS fallback */ }
+  }
+  document.body.classList.add('faux');
+}
+
+document.getElementById('fs').addEventListener('click', toggleFullscreen);
+stage.addEventListener('click', toggleFullscreen);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+  else if (e.key === 'Escape') document.body.classList.remove('faux');
+});
+
+const frameImg = document.getElementById('frame');
+let lastFrameUrl = null;
+// Long-poll on the sequence number: ask for the frame *after* the one shown,
+// so the browser advances in step with the producer instead of racing it and
+// alternately repeating and missing frames.
+(async function pumpFrames() {
+  let seen = 0;
+  while (true) {
+    try {
+      const res = await fetch(`/frame.jpg?seen=${seen}`, {cache: 'no-store'});
+      if (res.status === 204) continue;   // long poll timed out — ask again
+      if (!res.ok) { await new Promise(r => setTimeout(r, 200)); continue; }
+      seen = Number(res.headers.get('X-Frame-Seq')) || seen;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const prevUrl = lastFrameUrl;
+      await new Promise((resolve) => {
+        frameImg.onload = resolve;
+        frameImg.onerror = resolve;
+        frameImg.src = url;
+      });
+      lastFrameUrl = url;
+      if (prevUrl) URL.revokeObjectURL(prevUrl);
+    } catch (e) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+})();
 setInterval(async () => {
   const s = await (await fetch('/stats')).json();
   size.textContent = `${s.width}x${s.height} @ ${s.target_fps} fps`;
@@ -249,6 +330,31 @@ def build_app(hub, producer):
 
         return Response(frames(),
                         mimetype=f"multipart/x-mixed-replace; boundary={_BOUNDARY}")
+
+    @app.get("/frame.jpg")
+    def frame():
+        """One frame, long-polled on ``?seen=`` so a reader never repeats one.
+
+        Without the sequence number the reader and the producer run at
+        independent rates and beat against each other: the same frame gets
+        shown twice, then one is missed, which reads as a stutter however
+        evenly the producer publishes.  Passing back the last sequence number
+        seen blocks until there is genuinely a newer frame, so the reader
+        advances in lockstep.  ``seen=0`` (or omitted) takes whatever is
+        current, which is what a fresh page wants.
+        """
+        seen = request.args.get("seen", type=int, default=0)
+        if seen:
+            jpeg, seq = hub.wait(seen)
+            if jpeg is None:
+                return Response(status=204)  # timed out; the reader retries
+        else:
+            jpeg, seq = hub.latest_with_seq()
+            if jpeg is None:
+                return Response(status=503)
+        return Response(jpeg, mimetype="image/jpeg",
+                        headers={"X-Frame-Seq": str(seq),
+                                 "Cache-Control": "no-store"})
 
     @app.get("/stats")
     def stats():
