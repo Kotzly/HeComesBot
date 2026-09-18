@@ -63,14 +63,21 @@ def select_codec(ext, requested_codec):
 
 
 def build_ffmpeg_cmd(width, height, fps, codec, output_path,
-                     pixel_format="rgb24", bitrate="6M", alpha_pix_fmt=None):
-    """Build an ffmpeg command list that reads raw frames from stdin."""
+                     pixel_format="rgb24", bitrate="6M", alpha_pix_fmt=None,
+                     out_pix_fmt=None, extra_args=()):
+    """Build an ffmpeg command list that reads raw frames from stdin.
+
+    ``alpha_pix_fmt`` and ``out_pix_fmt`` both set the output ``-pix_fmt``;
+    the alpha one wins when both are given.  ``extra_args`` is appended just
+    before the output path, for codec-specific flags such as ``-preset``.
+    """
     openh264_args = (
         ["-profile:v", "high", "-coder", "cabac", "-rc_mode", "bitrate"]
         if codec == "libopenh264" else []
     )
     bitrate_args = ["-b:v", bitrate] if bitrate else []
-    alpha_args = ["-pix_fmt", alpha_pix_fmt] if alpha_pix_fmt else []
+    pix_fmt = alpha_pix_fmt or out_pix_fmt
+    pix_fmt_args = ["-pix_fmt", pix_fmt] if pix_fmt else []
     return [
         "ffmpeg", "-y",
         "-f", "rawvideo",
@@ -80,8 +87,9 @@ def build_ffmpeg_cmd(width, height, fps, codec, output_path,
         "-i", "pipe:0",
         "-vcodec", codec,
         *openh264_args,
-        *alpha_args,
+        *pix_fmt_args,
         *bitrate_args,
+        *extra_args,
         output_path,
     ]
 

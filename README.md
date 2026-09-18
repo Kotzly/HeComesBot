@@ -123,6 +123,105 @@ Options:
 | `--personality` | Personality JSON filename (without `.json`) | `personality` |
 | `--gpu` | Evaluate on GPU via CuPy | off |
 
+### Video (real-time backend)
+
+Same animation model as the delta backend, on a stripped-down evaluator that
+keeps up with playback. At 540x960 on four cores it generates 2-4x faster than
+real time where the general backend manages 0.3x.
+
+```bash
+hecomes-video-fast -W 540 -H 960 -d 15
+```
+
+Three changes carry the speedup, all in `artgen/fast.py`:
+
+- **Static warps are pre-compiled.** `swirl`, `ripple`, `pinch`, `polar_warp` and
+  `kaleidoscope` resolve to a backward map that depends only on the node
+  parameters and the frame size, never on time. The sample coordinates and
+  bilinear weights are computed once at compile time and each frame costs one
+  gather. The general backend instead rebuilds the coordinate grid and calls
+  `map_coordinates` once per channel per frame — 30 calls per 10-frame chunk
+  against one here.
+- **Separable convolution.** The 5x5 binomial kernel behind `blur` and `sharpen`
+  factors into two 1D passes (10 multiply-adds per pixel instead of 25), applied
+  to the whole chunk at once instead of per frame per channel.
+- **In-place elementwise ops.** Every buffer in the plan has exactly one
+  consumer, so `sin`/`cos`/`abs` and the binary ops write into their input.
+
+Output is unchanged: with `--sampling bilinear` the fast backend reproduces the
+general one to float32 precision (largest observed difference on a rendered
+frame: 1/255).
+
+Measured with `python profiling/bench_fast.py -W 540 -H 960 -n 12`, one worker,
+mean over 12 trees on four cores:
+
+| Backend | 540x960 |
+|---|---|
+| delta / path (general) | 9.7 fps |
+| fast, `--sampling bilinear` | 27.0 fps |
+| fast, `--sampling nearest` | 40.3 fps |
+
+#### Staying ahead of the clock
+
+Cost varies several-fold between trees: a chain of `sin`/`cos` is nearly free,
+three stacked `swirl`s is not. Rather than assume, each candidate tree is timed
+on real chunks through the real worker pool and redrawn if it falls short —
+so a tree that cannot hold the frame rate never reaches the encoder. Pass
+`--no-budget` to keep whatever is drawn, or `--budget-fps` to aim somewhere
+other than `--fps`.
+
+The budget is measured with the pool rather than by timing one worker and
+multiplying: the workers are memory-bandwidth bound and scale sublinearly (82%
+of linear at three workers on four cores). It also asks for 15% more than the
+target, because the encoder competes for the same CPU.
+
+If nothing clears the budget, the message says so and the levers are
+`--sampling nearest`, more `--processes`, a smaller frame, or a lower
+`--max-depth`.
+
+#### Options
+
+All flags of `hecomes-video` behave the same way. What differs:
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-o`, `--output` | Output path (single video only) | `videos/fast-N.<ext>` |
+| `-W`, `--width` | Frame width | 540 |
+| `-H`, `--height` | Frame height | 960 |
+| `-p`, `--processes` | Worker processes | CPU count minus one |
+| `-e`, `--extension` | Container | `mp4` |
+| `--sampling` | Warp interpolation: `bilinear`, `nearest` | `bilinear` |
+| `--drift` | Leaf drift per second (the delta backend's `alpha`) | 4e-3 |
+| `--preset` | Encoder speed preset for x264/x265 | `veryfast` |
+| `--budget-fps` | Throughput a tree must reach to be accepted | `--fps` |
+| `--max-tries` | Trees to draw before giving up on the budget | 20 |
+| `--no-budget` | Accept the first tree, however slow | off |
+| `--benchmark` | Measure throughput and exit without encoding | off |
+
+`--sampling nearest` makes each warp about four times cheaper by dropping
+bilinear interpolation. On warp-heavy trees the difference is visible as
+aliasing along edges (up to 23/255 per pixel); on trees without warps there is
+none.
+
+H.264 output is forced to `yuv420p`, which needs even width and height. The
+other CLIs leave the choice to ffmpeg, which picks `yuv444p` for `rgb24` input —
+a file most browsers and Instagram refuse to play.
+
+#### Restricted operator set
+
+The fast backend implements every leaf, both warping and elementwise unary ops,
+the elementwise binary ops, `blend` and `rgb_compose`. Three operators have no
+fast path and are dropped from the personality, with a note on startup:
+
+- `swap_phase_amplitude` — two FFTs per frame.
+- `warp_by`, `hsv_warp` — the warp field is itself animated, so the sample
+  coordinates cannot be pre-computed.
+
+`kaleidoscope` is reachable here but not in the general backend in practice: the
+general one builds a KD-tree per frame through `NearestNDInterpolator`, while
+this one expresses the same fold as a plain backward map. Sampling follows
+`--sampling`, so edges may differ by a pixel.
+
 ### Video (path animation backend)
 
 Leaf parameters are animated over time via path functions. Richer animation than the delta
