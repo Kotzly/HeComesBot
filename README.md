@@ -274,6 +274,19 @@ hecomes-instagram [options]
 | `-e`, `--extension` | `[reel/story-video]` Video format | `mp4` |
 | `-b`, `--bitrate` | `[reel/story-video]` Constant bitrate | `6M` |
 | `-p`, `--processes` | `[reel/story-video]` Parallel workers | 3 |
+| `--no-audio` | `[reel/story-video]` Post without an audio track | off |
+| `--no-audio-sync` | `[reel/story-video]` Make the audio independent of the video (see below) | off |
+| `--audio-volume` | `[reel/story-video]` Linear gain applied when muxing the audio | 0.05 |
+| `--audio-min-depth` / `--audio-max-depth` | `[reel/story-video]` Audio tree depth | 6 / 10 |
+| `--audio-seed` | `[reel/story-video]` Audio tree seed | derived from `--seed` |
+
+**Video-synced audio:** video posts get a stereo track whose timbre comes from a
+random audio tree (`hecomes.audiogen`) and whose movement follows the rendered
+frames (`hecomes.audiosync`). Each frame is block-averaged to ~128×128 and
+measured: motion sets the loudness and triggers hits on sudden changes,
+brightness opens a low-pass filter, hue transposes the pitch on a pentatonic
+scale, saturation adds distortion, and the horizontal position of the motion
+sets the stereo pan.
 
 **Aspect ratio requirements:**
 - `image`: 4:5 to 1.91:1 (square 1:1 works); 512×512 is fine

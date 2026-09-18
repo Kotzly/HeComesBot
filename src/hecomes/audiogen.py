@@ -7,6 +7,10 @@ node produces a 1D float32 waveform of shape ``(N,)`` instead of an
 Leaves are oscillators (sine, saw, square, triangle, noise). Unary ops are
 distortions and phase shift. Binary ops each take exactly 2 scalar
 parameters and combine two child waveforms.
+
+Every leaf accepts an optional ``pitch`` curve of shape ``(N,)``: a
+per-sample frequency ratio that transposes all oscillators together while
+keeping their phase continuous (see :mod:`hecomes.audiosync`).
 """
 
 from __future__ import annotations
@@ -23,30 +27,42 @@ TWO_PI = 2.0 * np.pi
 
 # ── Leaves (arity 0) ─────────────────────────────────────────────────────────
 
-def sine(n, freq=440.0, phase=0.0):
-    t = np.arange(n, dtype=np.float32) / SAMPLE_RATE
+def _time(n, pitch):
+    """Oscillator time axis in seconds, warped by an optional ``(n,)`` pitch ratio.
+
+    With a pitch curve, ``freq * t`` becomes the integral of ``freq * pitch``,
+    so frequency changes never break the phase (no clicks). Kept in float64
+    because the accumulated cycle count outgrows float32 precision.
+    """
+    if pitch is None:
+        return np.arange(n, dtype=np.float32) / SAMPLE_RATE
+    return (np.cumsum(pitch, dtype=np.float64) - pitch[0]) / SAMPLE_RATE
+
+
+def sine(n, freq=440.0, phase=0.0, pitch=None):
+    t = _time(n, pitch)
     return np.sin(TWO_PI * freq * t + phase).astype(np.float32)
 
 
-def saw(n, freq=110.0, phase=0.0):
-    t = np.arange(n, dtype=np.float32) / SAMPLE_RATE
+def saw(n, freq=110.0, phase=0.0, pitch=None):
+    t = _time(n, pitch)
     x = (freq * t + phase / TWO_PI) % 1.0
     return (2.0 * x - 1.0).astype(np.float32)
 
 
-def square(n, freq=220.0, duty=0.5):
-    t = np.arange(n, dtype=np.float32) / SAMPLE_RATE
+def square(n, freq=220.0, duty=0.5, pitch=None):
+    t = _time(n, pitch)
     x = (freq * t) % 1.0
     return np.where(x < duty, 1.0, -1.0).astype(np.float32)
 
 
-def triangle(n, freq=330.0, phase=0.0):
-    t = np.arange(n, dtype=np.float32) / SAMPLE_RATE
+def triangle(n, freq=330.0, phase=0.0, pitch=None):
+    t = _time(n, pitch)
     x = (freq * t + phase / TWO_PI) % 1.0
     return (4.0 * np.abs(x - 0.5) - 1.0).astype(np.float32)
 
 
-def noise(n, amp=0.5):
+def noise(n, amp=0.5, pitch=None):
     return (amp * np.random.uniform(-1.0, 1.0, size=n)).astype(np.float32)
 
 
@@ -210,10 +226,10 @@ def build_tree(depth=0, min_depth=2, max_depth=5):
     return Node(func=fd, params=params, children=children)
 
 
-def eval_tree(node, n_samples):
+def eval_tree(node, n_samples, pitch=None):
     if node.func.arity == 0:
-        return node.func.func(n_samples, **node.params)
-    args = [eval_tree(c, n_samples) for c in node.children]
+        return node.func.func(n_samples, pitch=pitch, **node.params)
+    args = [eval_tree(c, n_samples, pitch) for c in node.children]
     return node.func.func(*args, **node.params)
 
 
@@ -234,19 +250,22 @@ def normalize(x, headroom=0.9):
 
 
 def write_wav(path, samples, sr=SAMPLE_RATE):
+    """Write 16-bit PCM: ``(N,)`` samples as mono, ``(N, C)`` as C interleaved channels."""
     pcm = np.clip(samples, -1.0, 1.0)
     pcm = (pcm * 32767.0).astype(np.int16)
     with wave.open(path, "wb") as f:
-        f.setnchannels(1)
+        f.setnchannels(1 if pcm.ndim == 1 else pcm.shape[1])
         f.setsampwidth(2)
         f.setframerate(sr)
         f.writeframes(pcm.tobytes())
 
 
-def generate_wav(path, seconds, seed=None, min_depth=6, max_depth=10, verbose=False):
-    """Build a random tree, evaluate it, and write a mono 16-bit WAV to ``path``.
+def synthesize(seconds, seed=None, min_depth=6, max_depth=10, pitch=None, verbose=False):
+    """Seed the RNG, build a random tree and evaluate it for ``seconds``.
 
-    Returns the root node so callers can inspect it if they want.
+    ``pitch`` is an optional per-sample frequency ratio of length
+    ``int(seconds * SAMPLE_RATE)``. Returns ``(samples, root)``; samples are
+    not normalized.
     """
     if seed is not None:
         np.random.seed(seed % (2**32 - 1))
@@ -254,6 +273,14 @@ def generate_wav(path, seconds, seed=None, min_depth=6, max_depth=10, verbose=Fa
     root = build_tree(min_depth=min_depth, max_depth=max_depth)
     if verbose:
         print("\n".join(describe(root)))
-    y = normalize(eval_tree(root, n))
-    write_wav(path, y)
+    return eval_tree(root, n, pitch), root
+
+
+def generate_wav(path, seconds, seed=None, min_depth=6, max_depth=10, verbose=False):
+    """Build a random tree, evaluate it, and write a mono 16-bit WAV to ``path``.
+
+    Returns the root node so callers can inspect it if they want.
+    """
+    y, root = synthesize(seconds, seed, min_depth, max_depth, verbose=verbose)
+    write_wav(path, normalize(y))
     return root
