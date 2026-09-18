@@ -1,13 +1,25 @@
 import numpy as np
-from scipy.ndimage import convolve
+from scipy.ndimage import convolve, convolve1d
+
+F32 = np.float32
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
 
 def linear_mesh(dx=None, dy=None):
-    y = np.repeat(np.linspace(-1, 1, dy).reshape(-1, 1), dx, axis=1)
-    x = np.repeat(np.linspace(-1, 1, dx).reshape(1, -1), dy, axis=0)
-    return x, y
+    """float32 ``[-1, 1]`` coordinate grids of shape ``(dy, dx)``.
+
+    Returned as broadcast views, so the pair costs a few kilobytes instead of
+    two materialised arrays — 4.1 MB each at 540x960, and this is rebuilt by
+    every warp and every gradient leaf.  float32 also keeps warp coordinates
+    from being computed at double precision and cast back down.
+
+    The views are read-only.  Every operator here derives new arrays from them
+    (``x - cx``, ``np.sqrt(...)``); none writes into the grid itself.
+    """
+    xs = np.linspace(-1.0, 1.0, dx, dtype=F32)[None, :]
+    ys = np.linspace(-1.0, 1.0, dy, dtype=F32)[:, None]
+    return np.broadcast_to(xs, (dy, dx)), np.broadcast_to(ys, (dy, dx))
 
 
 def random_point():
@@ -103,3 +115,33 @@ def _apply_kernel(frame, kernel):
         np.expand_dims(convolve(c, kernel), 2) for c in frame.transpose(2, 0, 1)
     ]
     return np.concatenate(channels, axis=2)
+
+
+# ── Separable form of the 5x5 kernels above ──────────────────────────────────
+#
+# The 5x5 binomial kernel is the outer product of [1, 4, 6, 4, 1] / 16 with
+# itself, so it factors into two 1D passes: 10 multiply-adds per pixel instead
+# of 25.  Applied to a whole (n, dy, dx, c) batch at once, it also replaces the
+# per-frame, per-channel Python loop in _apply_kernel.  Results match the dense
+# form to float32 precision.
+#
+# The sharpen kernel is the same numerator with its centre tap at -476 rather
+# than 36, negated: that is -(gaussian - 512 * delta) / 256, i.e. 2*a - blur(a).
+
+_BINOMIAL_5 = np.array([1, 4, 6, 4, 1], dtype=F32) / 16.0
+
+
+def separable_blur(batch, output=None):
+    """5x5 binomial blur over a ``(n, dy, dx, c)`` batch.
+
+    Pass ``output=batch`` to filter in place when the input is not needed
+    afterwards; ``convolve1d`` handles aliasing internally.
+    """
+    first = convolve1d(batch, _BINOMIAL_5, axis=1, mode="reflect", output=output)
+    return convolve1d(first, _BINOMIAL_5, axis=2, mode="reflect", output=first)
+
+
+def separable_sharpen(batch):
+    """Unsharp mask ``2*a - blur(a)``: the separable form of the 5x5 sharpen kernel."""
+    blurred = separable_blur(batch)
+    return 2.0 * batch - blurred

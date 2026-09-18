@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.interpolate import NearestNDInterpolator
 from scipy.ndimage import map_coordinates
 from scipy.spatial.transform import Rotation as R
 
@@ -9,9 +8,6 @@ except ImportError:
     cp = None
 
 from hecomes.artgen.func_utils import (
-    _apply_kernel,
-    _gaussian_kernel_5,
-    _sharpen_kernel_5,
     get_radius,
     hsv_to_rgb,
     is_valid_shape,
@@ -19,7 +15,10 @@ from hecomes.artgen.func_utils import (
     random_point,
     random_radius,
     rgb_to_hsv,
+    separable_blur,
+    separable_sharpen,
 )
+from hecomes.artgen.resample import warp
 
 # ── Leaf functions (arity 0) ──────────────────────────────────────────────────
 
@@ -170,13 +169,11 @@ def absolute_value(x):
 
 
 def sharpen(x):
-    return np.stack([_apply_kernel(x[i], _sharpen_kernel_5) for i in range(x.shape[0])])
+    return separable_sharpen(x)
 
 
 def blur(x):
-    return np.stack(
-        [_apply_kernel(x[i], _gaussian_kernel_5) for i in range(x.shape[0])]
-    )
+    return separable_blur(x)
 
 
 def color_rotate(x, angles=None):
@@ -192,39 +189,26 @@ def _gen_color_rotate():
     return {"angles": (np.random.rand(3) * 2 * np.pi).tolist()}
 
 
-def _kaleidoscope_frame(image, points, new_points):
-    dx, dy, _ = image.shape
-    interp_funcs = [
-        NearestNDInterpolator(points, image[:, :, c].flatten()) for c in range(3)
-    ]
-    new_channels = np.concatenate(
-        [f(new_points).reshape(-1, 1) for f in interp_funcs], axis=1
-    )
-    return new_channels.reshape(dx, dy, 3).astype(np.float32)
-
-
 def kaleidoscope(x, n=None, phase=None):
-    image = x[0]
-    if not is_valid_shape(image):
+    """Fold the image into ``n`` mirrored wedges around the centre.
+
+    Expressed as a backward map (source position ``(r cos t, -r sin t)`` for
+    folded angle ``t``) rather than a nearest-neighbour lookup in (angle,
+    radius) space.  The old form built a ``NearestNDInterpolator`` KD-tree per
+    frame per channel, which is why the README warned against sizes above
+    400x400; this is three orders of magnitude cheaper and the size limit is
+    gone.  The two differ only very near the centre, where nearest-in-(angle,
+    radius) and nearest-in-(x, y) disagree.
+    """
+    if not is_valid_shape(x[0]):
         return x
     if n is None:
         p = np.array([1, 1, 0.75, 0.6, 0.45])
         p /= p.sum()
         n = int(np.random.choice([3, 5, 6, 7, 8], p=p))
-    phi = 2 * np.pi / n
     if phase is None:
-        phase = float(np.random.rand() * phi)
-    dx, dy, _ = image.shape
-    angles = np.arctan2(-linear_mesh(dy, dx)[1], linear_mesh(dy, dx)[0])
-    angles[angles < 0] += 2 * np.pi
-    radiuses = get_radius(*linear_mesh(dy, dx))
-    points = np.concatenate([angles.reshape(-1, 1), radiuses.reshape(-1, 1)], axis=1)
-    new_points = np.concatenate(
-        [(angles % phi + phase).reshape(-1, 1), radiuses.reshape(-1, 1)], axis=1
-    )
-    return np.stack(
-        [_kaleidoscope_frame(x[i], points, new_points) for i in range(x.shape[0])]
-    )
+        phase = float(np.random.rand() * (2 * np.pi / n))
+    return warp("kaleidoscope", x, n=n, phase=phase)
 
 
 def _gen_kaleidoscope():
@@ -238,32 +222,8 @@ def _gen_kaleidoscope():
 # ── Unary warp: swirl ────────────────────────────────────────────────────────
 
 
-def _swirl_frame(image, cx, cy, strength, power):
-    dy, dx, _ = image.shape
-    xs, ys = linear_mesh(dx=dx, dy=dy)
-    rx = xs - cx
-    ry = ys - cy
-    eps = 1e-6
-    r = np.sqrt(rx**2 + ry**2) + eps
-    theta = np.arctan2(ry, rx)
-
-    rot = strength * r**power
-    theta_src = theta - rot
-    x_src = cx + r * np.cos(theta_src)
-    y_src = cy + r * np.sin(theta_src)
-
-    col_src = (x_src + 1) / 2 * (dx - 1)
-    row_src = (y_src + 1) / 2 * (dy - 1)
-    return np.stack(
-        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
-         for c in range(3)],
-        axis=-1,
-    ).astype(np.float32)
-
-
 def swirl(x, cx=None, cy=None, strength=None, power=None):
-    image = x[0]
-    if not is_valid_shape(image):
+    if not is_valid_shape(x[0]):
         return x
     if cx is None:
         cx = float(np.random.uniform(-0.5, 0.5))
@@ -273,7 +233,7 @@ def swirl(x, cx=None, cy=None, strength=None, power=None):
         strength = float(np.random.choice([-1, 1]) * np.random.uniform(0.3, np.pi))
     if power is None:
         power = -2.0
-    return np.stack([_swirl_frame(x[i], cx, cy, strength, power) for i in range(x.shape[0])])
+    return warp("swirl", x, cx=cx, cy=cy, strength=strength, power=power)
 
 
 def _gen_swirl():
@@ -288,23 +248,8 @@ def _gen_swirl():
 # ── Unary warp: ripple ───────────────────────────────────────────────────────
 
 
-def _ripple_frame(image, ax, ay, kx, ky, phase_x, phase_y):
-    dy, dx, _ = image.shape
-    xs, ys = linear_mesh(dx=dx, dy=dy)
-    x_src = xs + ax * np.sin(kx * ys + phase_x)
-    y_src = ys + ay * np.sin(ky * xs + phase_y)
-    col_src = (x_src + 1) / 2 * (dx - 1)
-    row_src = (y_src + 1) / 2 * (dy - 1)
-    return np.stack(
-        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
-         for c in range(3)],
-        axis=-1,
-    ).astype(np.float32)
-
-
 def ripple(x, ax=None, ay=None, kx=None, ky=None, phase_x=None, phase_y=None):
-    image = x[0]
-    if not is_valid_shape(image):
+    if not is_valid_shape(x[0]):
         return x
     if ax is None:
         ax = float(np.random.uniform(0.05, 0.3))
@@ -318,7 +263,8 @@ def ripple(x, ax=None, ay=None, kx=None, ky=None, phase_x=None, phase_y=None):
         phase_x = float(np.random.uniform(0.0, 2 * np.pi))
     if phase_y is None:
         phase_y = float(np.random.uniform(0.0, 2 * np.pi))
-    return np.stack([_ripple_frame(x[i], ax, ay, kx, ky, phase_x, phase_y) for i in range(x.shape[0])])
+    return warp("ripple", x, ax=ax, ay=ay, kx=kx, ky=ky,
+                phase_x=phase_x, phase_y=phase_y)
 
 
 def _gen_ripple():
@@ -335,30 +281,8 @@ def _gen_ripple():
 # ── Unary warp: pinch/bulge ───────────────────────────────────────────────────
 
 
-def _pinch_frame(image, cx, cy, strength):
-    dy, dx, _ = image.shape
-    xs, ys = linear_mesh(dx=dx, dy=dy)
-    rx = xs - cx
-    ry = ys - cy
-    eps = 1e-6
-    r = np.sqrt(rx**2 + ry**2) + eps
-    # r_src = r^(1 + strength): strength > 0 → bulge, strength < 0 → pinch
-    r_src = np.power(r, 1.0 + strength)
-    scale = r_src / r
-    x_src = cx + rx * scale
-    y_src = cy + ry * scale
-    col_src = (x_src + 1) / 2 * (dx - 1)
-    row_src = (y_src + 1) / 2 * (dy - 1)
-    return np.stack(
-        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
-         for c in range(3)],
-        axis=-1,
-    ).astype(np.float32)
-
-
 def pinch(x, cx=None, cy=None, strength=None):
-    image = x[0]
-    if not is_valid_shape(image):
+    if not is_valid_shape(x[0]):
         return x
     if cx is None:
         cx = float(np.random.uniform(-0.3, 0.3))
@@ -366,7 +290,7 @@ def pinch(x, cx=None, cy=None, strength=None):
         cy = float(np.random.uniform(-0.3, 0.3))
     if strength is None:
         strength = float(np.random.choice([-1, 1]) * np.random.uniform(0.2, 0.8))
-    return np.stack([_pinch_frame(x[i], cx, cy, strength) for i in range(x.shape[0])])
+    return warp("pinch", x, cx=cx, cy=cy, strength=strength)
 
 
 def _gen_pinch():
@@ -380,33 +304,14 @@ def _gen_pinch():
 # ── Unary warp: polar remap ───────────────────────────────────────────────────
 
 
-def _polar_warp_frame(image, cx, cy):
-    dy, dx, _ = image.shape
-    xs, ys = linear_mesh(dx=dx, dy=dy)
-    rx = xs - cx
-    ry = ys - cy
-    r = np.sqrt(rx**2 + ry**2)
-    theta = (np.arctan2(ry, rx) + 2 * np.pi) % (2 * np.pi)  # [0, 2π]
-    # angle → column, radius → row (r_max = sqrt(2) covers full [-1,1]^2 diagonal)
-    r_max = np.sqrt(2.0)
-    col_src = theta / (2 * np.pi) * (dx - 1)
-    row_src = r / r_max * (dy - 1)
-    return np.stack(
-        [map_coordinates(image[:, :, c], [row_src, col_src], order=1, mode="nearest")
-         for c in range(3)],
-        axis=-1,
-    ).astype(np.float32)
-
-
 def polar_warp(x, cx=None, cy=None):
-    image = x[0]
-    if not is_valid_shape(image):
+    if not is_valid_shape(x[0]):
         return x
     if cx is None:
         cx = float(np.random.uniform(-0.3, 0.3))
     if cy is None:
         cy = float(np.random.uniform(-0.3, 0.3))
-    return np.stack([_polar_warp_frame(x[i], cx, cy) for i in range(x.shape[0])])
+    return warp("polar_warp", x, cx=cx, cy=cy)
 
 
 def _gen_polar_warp():
