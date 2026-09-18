@@ -8,6 +8,7 @@ history/
 *.webm
 *.avi
 *.gif
+*.wav
 log.txt
 *.egg-info/
 .vscode/

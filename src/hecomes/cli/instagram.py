@@ -23,6 +23,7 @@ Example usage::
 import optparse
 import os
 import queue
+import subprocess
 import tempfile
 import threading
 import time
@@ -31,6 +32,7 @@ import numpy as np
 from numpy.random import rand
 
 from hecomes.artgen.tree_paths import integrate_ode_paths, load_paths_config
+from hecomes.audiogen import generate_wav as generate_audio_wav
 from hecomes.cli._video_utils import (
     build_ffmpeg_cmd,
     build_path_plan,
@@ -75,6 +77,57 @@ def _generate_video(args, plans, n_color, output_path):
         pool_initializer=init_worker,
         pool_initargs=(plans, args.color_space, args.independent_channels, n_color, args.gpu),
     )
+
+
+def _attach_audio(args, video_path, seed):
+    """Generate a matching-length audio track and mux it into ``video_path`` in place.
+
+    Uses ffmpeg to remux with ``-c:v copy`` (no re-encode) and attenuates the
+    audio by ``args.audio_volume``. The audio seed defaults to ``seed ^ 0xA0D10``
+    so it does not interfere with the video RNG stream.
+    """
+    audio_seed = args.audio_seed if args.audio_seed is not None else (seed ^ 0xA0D10)
+    audio_tmp = video_path + ".audio.wav"
+    muxed_tmp = video_path + ".muxed" + os.path.splitext(video_path)[1]
+
+    print(
+        f"[audio] Generating {args.duration}s track "
+        f"(seed={audio_seed}, min-depth={args.audio_min_depth}, max-depth={args.audio_max_depth})"
+    )
+    generate_audio_wav(
+        audio_tmp,
+        seconds=float(args.duration),
+        seed=audio_seed,
+        min_depth=args.audio_min_depth,
+        max_depth=args.audio_max_depth,
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-i", audio_tmp,
+        "-c:v", "copy",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-filter:a", f"volume={args.audio_volume}",
+        "-shortest",
+        muxed_tmp,
+    ]
+    print(f"[audio] Muxing at volume={args.audio_volume}")
+    try:
+        subprocess.run(cmd, check=True)
+        os.replace(muxed_tmp, video_path)
+    finally:
+        for p in (audio_tmp,):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        if os.path.exists(muxed_tmp):
+            try:
+                os.unlink(muxed_tmp)
+            except OSError:
+                pass
 
 
 def _generate_image(args, seed, output_path):
@@ -197,6 +250,8 @@ def _generate_to_file(args, seed):
                 color_plans = [build_path_plan(weights=p, seed=seed, **build_kwargs)]
                 n_color = 1
             _generate_video(args, color_plans, n_color, tmp_path)
+            if not args.no_audio:
+                _attach_audio(args, tmp_path, seed)
         else:
             _generate_image(args, seed, tmp_path)
     except Exception:
@@ -346,6 +401,29 @@ def _parse_args():
             "Also post to Stories in addition to the feed post. "
             "Only applies to --type image and --type reel."
         ),
+    )
+    parser.add_option(
+        "--no-audio", dest="no_audio", action="store_true", default=False,
+        help="Skip audio generation for video posts.",
+    )
+    parser.add_option(
+        "--audio-volume", dest="audio_volume", type=float, default=0.05,
+        help=(
+            "Attenuation applied to the generated audio track when muxed into "
+            "video posts (ffmpeg volume filter, linear). Default: 0.05."
+        ),
+    )
+    parser.add_option(
+        "--audio-min-depth", dest="audio_min_depth", type=int, default=6,
+        help="Audio tree min depth. Default: 6.",
+    )
+    parser.add_option(
+        "--audio-max-depth", dest="audio_max_depth", type=int, default=10,
+        help="Audio tree max depth. Default: 10.",
+    )
+    parser.add_option(
+        "--audio-seed", dest="audio_seed", type=int, default=None,
+        help="Audio RNG seed. Default: derived from --seed.",
     )
     parser.add_option(
         "--every", dest="every", type=str, default=None,
